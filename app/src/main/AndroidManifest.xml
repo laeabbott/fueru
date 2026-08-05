@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Giphy GIF fetching (celebrations) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Optional: This Week screen calendar-window suggestions. Requested contextually, not at launch. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Android 13+, requested contextually before the first reminder is scheduled -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Optional haptic tick on set/exercise completion -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Escalation Engine (spec §7.2/§8.2), Stages 0-2. Exact-alarm grant is requested contextually
+         from Settings, not at launch (see EscalationPermissions) — not auto-granted on apps
+         targeting API 34+, same reasoning as every other contextual permission here. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application
+        android:name=".FueruApplication"
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Fueru">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Fueru"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Escalation Engine, Stages 0-2 (spec §7.2/§8.2). -->
+        <receiver
+            android:name=".escalation.EscalationReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".escalation.EscalationLockService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Shows a full-screen alarm-style lock when a scheduled practice goes unmarked past its configured grace period." />
+        </service>
+
+        <activity
+            android:name=".escalation.EscalationLockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Fueru" />
+    </application>
+
+</manifest>

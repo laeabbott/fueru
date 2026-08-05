@@ -1,0 +1,19 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+app/build/
+
+# Claude Code's local permission/session config can end up echoing literal command text
+# (including secrets typed into a terminal command, like the USDA_API_KEY curl test this
+# project ran) — keep it out of version control same as local.properties.
+.claude/settings.local.json
+
+# Transient per-session lock file (pid/session id), not project state.
+.claude/scheduled_tasks.lock

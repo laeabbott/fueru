@@ -1,0 +1,15 @@
+R.drawable.ic_arrow_left
+R.drawable.ic_barbell
+R.drawable.ic_barbell_fill
+R.drawable.ic_bell
+R.drawable.ic_calendar
+R.drawable.ic_chart_line_up
+R.drawable.ic_chart_line_up_fill
+R.drawable.ic_check_circle_fill
+R.drawable.ic_fire_fill
+R.drawable.ic_fork_knife
+R.drawable.ic_fork_knife_fill
+R.drawable.ic_house
+R.drawable.ic_house_fill
+R.drawable.ic_minus_circle
+R.drawable.ic_plus_circle
