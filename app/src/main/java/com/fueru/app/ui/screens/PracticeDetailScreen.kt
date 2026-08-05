@@ -28,6 +28,7 @@ import com.fueru.app.FueruApplication
 import com.fueru.app.R
 import com.fueru.app.data.DateUtils
 import com.fueru.app.data.PracticeScoring
+import com.fueru.app.data.entity.GuidedSession
 import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.data.entity.PracticeScheduledSlot
 import com.fueru.app.ui.components.FueruButton
@@ -43,7 +44,10 @@ import com.fueru.app.ui.theme.FueruColors
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Radius
 import com.fueru.app.ui.theme.Spacing
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 
 /**
@@ -79,6 +83,10 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
     var showScheduleDialog by remember { mutableStateOf(false) }
 
     val charityCount by database.charityDao().observeAll().collectAsState(initial = emptyList())
+
+    val recentGuidedSessions by database.guidedSessionDao()
+        .observeRecentForPractice(practiceId, 10)
+        .collectAsState(initial = emptyList<GuidedSession>())
 
     fun logToday(status: String) {
         scope.launch {
@@ -128,6 +136,33 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
                             },
                             label = "Charity pledge if this goes unmarked long enough",
                         )
+                    }
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            Text(text = "session style", color = FueruColors.TextSecondary, style = FueruType.title)
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    FueruSwitch(
+                        checked = current.guidedSessionEnabled,
+                        onCheckedChange = { checked ->
+                            scope.launch { database.practiceDao().update(current.copy(guidedSessionEnabled = checked)) }
+                        },
+                        label = "Guided session (pick a type + duration each time)",
+                    )
+                    if (current.guidedSessionEnabled && recentGuidedSessions.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space1)) {
+                            Text(text = "recent sessions", color = FueruColors.TextMuted, style = FueruType.caption)
+                            recentGuidedSessions.forEach { session ->
+                                Text(
+                                    text = "${formatSessionDate(session.timestamp)} · ${session.sessionType} · ${session.durationMinutes} min",
+                                    color = FueruColors.TextSecondary,
+                                    style = FueruType.caption,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -227,6 +262,12 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
         )
     }
 }
+
+private val sessionDateFormatter = DateTimeFormatter.ofPattern("MMM d")
+
+/** "Aug 5" — used by the guided-session "recent sessions" list, module round 1 ("fuwari"). */
+private fun formatSessionDate(epochMillis: Long): String =
+    Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(sessionDateFormatter)
 
 /** "no schedule set" / "Mon, Wed, Fri" / "Mon, Wed, Fri · 7:00 AM" (only shows a time if every slot shares the same one — the common case, since v1's editor only ever writes one shared time across all selected days). */
 private fun formatScheduleSummary(slots: List<PracticeScheduledSlot>): String {

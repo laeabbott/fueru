@@ -24,4 +24,8 @@ data class Practice(
     val shortFlowEnabled: Boolean = false,
     /** §7.3 Stage 3/4 stick config — when true, this practice's escalation goes past Stage 2 into the charity-pledge consequence. False (the default) means Stage 2 is the ceiling, matching "alarm-only, no external stakes." */
     val stickCharityEnabled: Boolean = false,
+    /** When true, Resistance Flow's Commit step swaps its generic micro-action+short-timer UI for a session-type + real-duration picker (module round 1, "fuwari") — see GuidedSession for what gets logged. Generic flag, not tied to any one practice, so any future practice needing a real timed session can opt in. */
+    val guidedSessionEnabled: Boolean = false,
+    /** Whether this practice gets its own bottom-nav tab (routes straight to its detail screen), toggled from Settings' "practice tabs" section — independent of guidedSessionEnabled. */
+    val showAsTab: Boolean = false,
 )

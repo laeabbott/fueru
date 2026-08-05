@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -34,13 +35,15 @@ import com.fueru.app.ui.screens.ThisWeekScreen
 import com.fueru.app.ui.screens.UpcomingWorkoutScreen
 import com.fueru.app.ui.screens.WorkoutScreen
 
-private val tabRoutes = setOf(FueruRoutes.HOME, FueruRoutes.WORKOUT, FueruRoutes.FUEL, FueruRoutes.PROGRESS)
+private val staticTabRoutes = setOf(FueruRoutes.HOME, FueruRoutes.WORKOUT, FueruRoutes.FUEL, FueruRoutes.PROGRESS)
 
 /**
  * Home / Workout / Fuel / Progress bottom tabs (per the live design system), with Splash,
  * Onboarding, and ThisWeek as full-screen flows outside the tab bar. Fuel is only listed in the
  * tab bar when food tracking is enabled — the route itself is always registered so a direct
- * navigate() still works.
+ * navigate() still works. Practices with `showAsTab` (Settings' "practice tabs" section, module
+ * round 1) get appended dynamically below — see the `tabRoutes`/`currentRoute` handling further
+ * down for why a practice's route needs reconstructing rather than compared directly.
  */
 @Composable
 fun FueruNavGraph(
@@ -53,9 +56,24 @@ fun FueruNavGraph(
     val application = LocalContext.current.applicationContext as FueruApplication
     val userProfile by application.database.userProfileDao().observe().collectAsState(initial = null)
     val foodTrackingEnabled = userProfile?.foodTrackingEnabled == true
+    val practices by application.database.practiceDao().observeAll().collectAsState(initial = emptyList())
+    val tabPractices = remember(practices) { practices.filter { it.showAsTab } }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route
+    val rawRoute = backStackEntry?.destination?.route
+    // Compose Navigation's destination.route is the route *pattern* (e.g.
+    // "practice_detail/{practiceId}"), not the filled-in path — so comparing it directly against a
+    // concrete practice tab's route (e.g. "practice_detail/5") would never match, and that tab would
+    // never show as active. Reconstruct the concrete route from the actual practiceId argument
+    // whenever we're on that pattern, before doing any tab comparisons below.
+    val currentRoute = if (rawRoute == FueruRoutes.PRACTICE_DETAIL_PATTERN) {
+        backStackEntry?.arguments?.getLong("practiceId")?.let { FueruRoutes.practiceDetail(it) } ?: rawRoute
+    } else {
+        rawRoute
+    }
+    val tabRoutes = remember(tabPractices) {
+        staticTabRoutes + tabPractices.map { FueruRoutes.practiceDetail(it.id) }
+    }
     val showBottomNav = currentRoute in tabRoutes
 
     // An escalation notification tap (Stage 0/1, see NotificationHelper.resistanceFlowPendingIntent)
@@ -86,6 +104,12 @@ fun FueruNavGraph(
             add(FueruBottomNavItem("Fuel", R.drawable.ic_fork_knife, R.drawable.ic_fork_knife_fill, FueruRoutes.FUEL))
         }
         add(FueruBottomNavItem("Progress", R.drawable.ic_chart_line_up, R.drawable.ic_chart_line_up_fill, FueruRoutes.PROGRESS))
+        // No existing drawable is generic enough for an arbitrary user-named practice (the set above
+        // is all screen-specific) — reusing the fire-branded flame icon for every practice tab rather
+        // than building an icon-picker system nobody asked for.
+        tabPractices.forEach { practice ->
+            add(FueruBottomNavItem(practice.name, R.drawable.ic_flame_fill, R.drawable.ic_flame_fill, FueruRoutes.practiceDetail(practice.id)))
+        }
     }
 
     Scaffold(

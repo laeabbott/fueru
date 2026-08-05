@@ -12,6 +12,7 @@ import com.fueru.app.data.dao.CustomFoodIngredientDao
 import com.fueru.app.data.dao.DailyNutritionLogDao
 import com.fueru.app.data.dao.ExerciseDao
 import com.fueru.app.data.dao.FoodLogEntryDao
+import com.fueru.app.data.dao.GuidedSessionDao
 import com.fueru.app.data.dao.PracticeDao
 import com.fueru.app.data.dao.PracticeLogEntryDao
 import com.fueru.app.data.dao.PracticeScheduledSlotDao
@@ -30,6 +31,7 @@ import com.fueru.app.data.entity.CustomFoodIngredient
 import com.fueru.app.data.entity.DailyNutritionLog
 import com.fueru.app.data.entity.Exercise
 import com.fueru.app.data.entity.FoodLogEntry
+import com.fueru.app.data.entity.GuidedSession
 import com.fueru.app.data.entity.Practice
 import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.data.entity.PracticeScheduledSlot
@@ -62,6 +64,7 @@ import com.fueru.app.data.entity.UserProfile
         ResistanceSession::class,
         Charity::class,
         ConsequenceEvent::class,
+        GuidedSession::class,
     ],
     // 7 -> 8: dropped the points/streak ledger (PointsLedgerEntry + UserProfile's four points/streak
     // fields — the gamification layer removed as part of the practices pivot) and added the new
@@ -70,7 +73,9 @@ import com.fueru.app.data.entity.UserProfile
     // 8 -> 9: added PracticeScheduledSlot (Scheduler phase, project brief §5).
     // 9 -> 10: added ResistanceSession + Practice.shortFlowEnabled (Resistance Flow phase, §6).
     // 10 -> 11: added Charity + ConsequenceEvent + Practice.stickCharityEnabled (Stage 3/4 pledge mode, §7.3/§7.4).
-    version = 11,
+    // 11 -> 12: added GuidedSession + Practice.guidedSessionEnabled/showAsTab (first practice module,
+    // "fuwari" — guided session timer + configurable bottom tabs).
+    version = 12,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -94,6 +99,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun resistanceSessionDao(): ResistanceSessionDao
     abstract fun charityDao(): CharityDao
     abstract fun consequenceEventDao(): ConsequenceEventDao
+    abstract fun guidedSessionDao(): GuidedSessionDao
 
     companion object {
         @Volatile

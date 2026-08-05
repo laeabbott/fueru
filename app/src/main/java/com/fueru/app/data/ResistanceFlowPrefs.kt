@@ -16,8 +16,9 @@ object ResistanceFlowPrefs {
     fun getMicroAction(context: Context, practiceId: Long, fallback: String?): String =
         prefs(context).getString(microActionKey(practiceId), null) ?: fallback ?: ""
 
-    fun getTimerSeconds(context: Context, practiceId: Long): Int =
-        prefs(context).getInt(timerKey(practiceId), DEFAULT_TIMER_SECONDS)
+    /** [default] lets a guided-session practice (module round 1, "fuwari") default to a real session length (e.g. 20min) on first use, instead of the generic 2min micro-action timer default. */
+    fun getTimerSeconds(context: Context, practiceId: Long, default: Int = DEFAULT_TIMER_SECONDS): Int =
+        prefs(context).getInt(timerKey(practiceId), default)
 
     fun save(context: Context, practiceId: Long, microAction: String, timerSeconds: Int) {
         prefs(context).edit()

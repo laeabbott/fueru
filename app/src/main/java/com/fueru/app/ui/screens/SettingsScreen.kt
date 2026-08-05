@@ -55,6 +55,7 @@ fun SettingsScreen(onBack: () -> Unit, onDataWiped: () -> Unit, onOpenCharities:
 
     val userProfile by database.userProfileDao().observe().collectAsState(initial = null)
     val profile = userProfile ?: return
+    val practices by database.practiceDao().observeAll().collectAsState(initial = emptyList())
 
     var unit by remember { mutableStateOf(WeightUnitStore.get(application)) }
     var displayName by remember(profile.displayName) { mutableStateOf(profile.displayName) }
@@ -179,6 +180,32 @@ fun SettingsScreen(onBack: () -> Unit, onDataWiped: () -> Unit, onOpenCharities:
                         onClick = onOpenCharities,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            Text(text = "practice tabs", color = FueruColors.TextSecondary, style = FueruType.title)
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    Text(
+                        text = "Choose which practices get their own tab at the bottom, instead of being reached through the Practices list.",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                    )
+                    if (practices.isEmpty()) {
+                        Text(text = "no practices yet", color = FueruColors.TextMuted, style = FueruType.caption)
+                    } else {
+                        practices.forEach { practice ->
+                            FueruSwitch(
+                                checked = practice.showAsTab,
+                                onCheckedChange = { checked ->
+                                    scope.launch { database.practiceDao().update(practice.copy(showAsTab = checked)) }
+                                },
+                                label = practice.name,
+                            )
+                        }
+                    }
                 }
             }
         }

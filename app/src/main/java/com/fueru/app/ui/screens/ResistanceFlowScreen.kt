@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.fueru.app.FueruApplication
 import com.fueru.app.data.AppDatabase
 import com.fueru.app.data.ResistanceFlowPrefs
+import com.fueru.app.data.entity.GuidedSession
 import com.fueru.app.data.entity.Practice
 import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.data.entity.ResistanceSession
@@ -56,6 +57,11 @@ private val attributionOptions = listOf(
     "honestly, no idea — but I did it",
 )
 private val timerChoicesSeconds = listOf(60, 120, 300)
+
+// ---- Guided session (module round 1, "fuwari") --------------------------------------------------
+private val guidedDurationPresetMinutes = listOf(5, 20, 45, 60, 90)
+private const val GUIDED_DEFAULT_SECONDS = 20 * 60
+private val guidedDefaultTypes = listOf("meditation", "dharma study")
 
 private data class SessionData(
     val tag: String = "",
@@ -107,8 +113,21 @@ fun ResistanceFlowScreen(
     var session by remember(practiceId) {
         mutableStateOf(
             SessionData(
-                microAction = ResistanceFlowPrefs.getMicroAction(context, practiceId, current.microActionDefault),
-                timerSeconds = ResistanceFlowPrefs.getTimerSeconds(context, practiceId),
+                // For a guided-session practice, microAction/timerSeconds are semantically repurposed
+                // as "session type" and "session duration" — same fields, same ResistanceFlowPrefs
+                // persistence, same §6.3 fade-unlock interaction, different UI to set them (see
+                // GuidedSessionCommitStep). No fallback micro-action text for guided practices — the
+                // type picker starts blank until the user actually picks one.
+                microAction = if (current.guidedSessionEnabled) {
+                    ResistanceFlowPrefs.getMicroAction(context, practiceId, null)
+                } else {
+                    ResistanceFlowPrefs.getMicroAction(context, practiceId, current.microActionDefault)
+                },
+                timerSeconds = ResistanceFlowPrefs.getTimerSeconds(
+                    context,
+                    practiceId,
+                    default = if (current.guidedSessionEnabled) GUIDED_DEFAULT_SECONDS else 120,
+                ),
             ),
         )
     }
@@ -131,6 +150,20 @@ fun ResistanceFlowScreen(
                     attribution = session.attribution,
                 ),
             )
+            // Guided-session practices (module round 1, "fuwari") get their own log row too — type +
+            // real duration, the "extra fields" ResistanceSession deliberately doesn't carry since it
+            // stays generic across every practice. microAction/timerSeconds are the repurposed fields
+            // set by GuidedSessionCommitStep.
+            if (current.guidedSessionEnabled && session.microAction.isNotBlank()) {
+                database.guidedSessionDao().insert(
+                    GuidedSession(
+                        practiceId = practiceId,
+                        timestamp = System.currentTimeMillis(),
+                        sessionType = session.microAction,
+                        durationMinutes = session.timerSeconds / 60,
+                    ),
+                )
+            }
             step = FlowStep.SUMMARY
         }
     }
@@ -151,16 +184,31 @@ fun ResistanceFlowScreen(
                 onDone = { step = FlowStep.COMMIT },
                 onSkip = { session = session.copy(bodyCheckSkipped = true); step = FlowStep.COMMIT },
             )
-            FlowStep.COMMIT -> CommitStep(
-                microAction = session.microAction,
-                timerSeconds = session.timerSeconds,
-                onMicroActionChange = { session = session.copy(microAction = it) },
-                onTimerChange = { session = session.copy(timerSeconds = it) },
-                onNext = {
-                    ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds)
-                    step = FlowStep.IGNITE
-                },
-            )
+            FlowStep.COMMIT -> if (current.guidedSessionEnabled) {
+                GuidedSessionCommitStep(
+                    database = database,
+                    practiceId = practiceId,
+                    sessionType = session.microAction,
+                    durationSeconds = session.timerSeconds,
+                    onTypeChange = { session = session.copy(microAction = it) },
+                    onDurationChange = { session = session.copy(timerSeconds = it) },
+                    onNext = {
+                        ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds)
+                        step = FlowStep.IGNITE
+                    },
+                )
+            } else {
+                CommitStep(
+                    microAction = session.microAction,
+                    timerSeconds = session.timerSeconds,
+                    onMicroActionChange = { session = session.copy(microAction = it) },
+                    onTimerChange = { session = session.copy(timerSeconds = it) },
+                    onNext = {
+                        ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds)
+                        step = FlowStep.IGNITE
+                    },
+                )
+            }
             FlowStep.IGNITE -> IgniteStep(
                 practiceName = current.name,
                 onIgnite = {
@@ -341,6 +389,103 @@ private fun CommitStep(
             }
         }
         FueruButton(text = "Next", enabled = microAction.isNotBlank(), onClick = onNext, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+// ---- Guided session Commit (module round 1, "fuwari") ---------------------------------------------
+
+/**
+ * Replaces [CommitStep] for practices with `guidedSessionEnabled` — a real session type + duration
+ * picker instead of the generic micro-action + short-timer UI. Mirrors [NameItStep]'s exact
+ * "quick-picks + other reveals a text field" pattern for session type (source: real usage history via
+ * [GuidedSessionDao], not a fixed enum — deliberately flexible, e.g. meditation one day, text study
+ * another). Duration is five presets (5/20/45/60/90min) or a custom minute entry.
+ */
+@Composable
+private fun GuidedSessionCommitStep(
+    database: AppDatabase,
+    practiceId: Long,
+    sessionType: String,
+    durationSeconds: Int,
+    onTypeChange: (String) -> Unit,
+    onDurationChange: (Int) -> Unit,
+    onNext: () -> Unit,
+) {
+    var recentTypes by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(practiceId) { recentTypes = database.guidedSessionDao().getRecentTypesForPractice(practiceId) }
+    val quickTypes = remember(recentTypes) { (recentTypes + guidedDefaultTypes).distinct() }
+
+    var customTypeText by remember { mutableStateOf("") }
+    val isOtherType = sessionType.isNotBlank() && sessionType !in quickTypes
+
+    var showCustomDuration by remember { mutableStateOf((durationSeconds / 60) !in guidedDurationPresetMinutes) }
+    var customDurationText by remember { mutableStateOf((durationSeconds / 60).toString()) }
+
+    StepScaffold(title = "this session") {
+        Text(text = "what kind of session", color = FueruColors.TextSecondary, style = FueruType.body)
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            quickTypes.forEach { type ->
+                FueruButton(
+                    text = type,
+                    variant = if (sessionType == type) FueruButtonVariant.Primary else FueruButtonVariant.Secondary,
+                    onClick = { onTypeChange(type) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            FueruButton(
+                text = "other",
+                variant = if (isOtherType) FueruButtonVariant.Primary else FueruButtonVariant.Secondary,
+                onClick = { onTypeChange(customTypeText.ifBlank { "a session" }) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (isOtherType) {
+                FueruTextField(
+                    value = customTypeText,
+                    onValueChange = { customTypeText = it; onTypeChange(it.ifBlank { "a session" }) },
+                    placeholder = "say what kind",
+                )
+            }
+        }
+        Text(text = "for how long", color = FueruColors.TextSecondary, style = FueruType.caption)
+        // Five presets don't fit one Row at this width without squeezing the last button unreadably
+        // narrow (caught live on-device) — two rows instead, matching how every other multi-choice
+        // row in this file tops out at 3 across.
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                guidedDurationPresetMinutes.take(3).forEach { minutes ->
+                    FueruButton(
+                        text = "${minutes}min",
+                        variant = if (!showCustomDuration && durationSeconds == minutes * 60) FueruButtonVariant.Primary else FueruButtonVariant.Secondary,
+                        onClick = { showCustomDuration = false; onDurationChange(minutes * 60) },
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                guidedDurationPresetMinutes.drop(3).forEach { minutes ->
+                    FueruButton(
+                        text = "${minutes}min",
+                        variant = if (!showCustomDuration && durationSeconds == minutes * 60) FueruButtonVariant.Primary else FueruButtonVariant.Secondary,
+                        onClick = { showCustomDuration = false; onDurationChange(minutes * 60) },
+                    )
+                }
+            }
+        }
+        FueruButton(
+            text = "custom",
+            variant = if (showCustomDuration) FueruButtonVariant.Primary else FueruButtonVariant.Secondary,
+            onClick = { showCustomDuration = true },
+        )
+        if (showCustomDuration) {
+            FueruTextField(
+                value = customDurationText,
+                onValueChange = { text ->
+                    customDurationText = text
+                    text.toIntOrNull()?.takeIf { it > 0 }?.let { onDurationChange(it * 60) }
+                },
+                placeholder = "minutes",
+            )
+        }
+        FueruButton(text = "Next", enabled = sessionType.isNotBlank(), onClick = onNext, modifier = Modifier.fillMaxWidth())
     }
 }
 
