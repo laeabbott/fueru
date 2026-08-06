@@ -80,6 +80,10 @@ import com.fueru.app.data.entity.UserProfile
     // 13 -> 14: added UserProfile.goal ("buildMuscle" or "maintain"), feeding TdeeCalculator's
     // surplus decision — follow-up round, onboarding didn't previously ask this.
     // 14 -> 15: added Practice.vacationUntilDate (vacation-practices round).
+    // -- Update-without-wiping policy starts here: every bump from 15 onward needs a matching
+    // entry in Migrations.kt, not just a version-history comment. See that file's own doc comment
+    // for the exact process. Anything older than 15 still falls back to a destructive wipe below —
+    // that data was deliberately abandoned the day this policy took effect.
     version = 15,
     exportSchema = true,
 )
@@ -124,9 +128,17 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 "fueru.db",
             )
-                // Dev-time only: no real user data to preserve yet, so a schema bump just wipes
-                // and reseeds rather than needing a real Migration. Revisit before shipping.
-                .fallbackToDestructiveMigration(dropAllTables = true)
+                // Update-without-wiping policy (see Migrations.kt) — real migrations from here on,
+                // starting at version 15. Anything installed at an older version than that still
+                // gets a destructive wipe on update (that data was already abandoned the day this
+                // policy took effect); a downgrade — installing an older build over a newer DB,
+                // not expected in normal use — also still wipes rather than needing a real
+                // backward migration. Any *other* unhandled upgrade hop (i.e. a future version
+                // bump that forgot to add a Migrations.kt entry) now throws instead of silently
+                // deleting data — that's deliberate, see Migrations.kt's doc comment.
+                .addMigrations(*Migrations.ALL)
+                .fallbackToDestructiveMigrationFrom(true, *(1..14).toList().toIntArray())
+                .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                 .build()
         }
     }
