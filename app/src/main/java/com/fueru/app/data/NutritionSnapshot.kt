@@ -21,6 +21,7 @@ suspend fun loadNutritionSnapshot(database: AppDatabase, profile: UserProfile): 
         age = profile.age,
         bmrFormulaVariant = profile.bmrFormulaVariant,
         activityLevel = profile.activityLevel,
+        goal = profile.goal,
     )
     return NutritionSnapshot(log = log, targets = targets, mode = profile.foodTrackingMode ?: "macros")
 }

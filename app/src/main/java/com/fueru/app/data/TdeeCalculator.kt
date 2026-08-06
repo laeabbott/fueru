@@ -24,6 +24,9 @@ object TdeeCalculator {
     fun tdee(weightKg: Float, heightCm: Float, age: Int, bmrFormulaVariant: String, activityLevel: String): Float =
         bmr(weightKg, heightCm, age, bmrFormulaVariant) * activityMultiplier(activityLevel)
 
+    /** Standard lean-bulk surplus — modest on purpose, not a "dirty bulk" number. */
+    private const val BUILD_MUSCLE_SURPLUS_KCAL = 300f
+
     data class MacroTargets(
         val tdeeKcal: Int,
         val proteinG: Int,
@@ -34,6 +37,13 @@ object TdeeCalculator {
     /**
      * [proteinGPerLb] is adjustable in the UI within a 0.7-1.1 g/lb range (spec 6.1); defaults to
      * the 0.9 g/lb used in the source program's own worked example. All grams rounded to nearest 5.
+     *
+     * [goal] ("buildMuscle" or "maintain", follow-up round — onboarding didn't ask this before)
+     * adds [BUILD_MUSCLE_SURPLUS_KCAL] on top of maintenance TDEE before the macro split, so the
+     * displayed "target kcal" already reflects the surplus. Protein stays on the same g/lb-of-
+     * bodyweight basis regardless of goal (more protein isn't what a surplus is for) and fat stays
+     * a flat 25% of the (now higher) calorie target — the extra calories land in carbs, same as any
+     * other change to the top-line kcal number would.
      */
     fun macroTargets(
         weightKg: Float,
@@ -42,8 +52,10 @@ object TdeeCalculator {
         bmrFormulaVariant: String,
         activityLevel: String,
         proteinGPerLb: Float = 0.9f,
+        goal: String = "maintain",
     ): MacroTargets {
-        val tdeeKcal = tdee(weightKg, heightCm, age, bmrFormulaVariant, activityLevel)
+        val maintenanceKcal = tdee(weightKg, heightCm, age, bmrFormulaVariant, activityLevel)
+        val tdeeKcal = if (goal == "buildMuscle") maintenanceKcal + BUILD_MUSCLE_SURPLUS_KCAL else maintenanceKcal
         val weightLb = weightKg * KG_TO_LB
         val proteinG = proteinGPerLb * weightLb
         val proteinKcal = proteinG * 4f

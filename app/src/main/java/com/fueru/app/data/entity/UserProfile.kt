@@ -17,6 +17,8 @@ data class UserProfile(
     val bmrFormulaVariant: String,
     /** sedentary / light / moderate / active / veryActive */
     val activityLevel: String,
+    /** "buildMuscle" or "maintain" — feeds TdeeCalculator's surplus decision. */
+    val goal: String,
     /** 1 ("could be mistaken for a skeleton") to 5 ("swol like yo mama") — feeds StartingWeightSeed. */
     val strengthLevel: Int,
     val foodTrackingEnabled: Boolean,

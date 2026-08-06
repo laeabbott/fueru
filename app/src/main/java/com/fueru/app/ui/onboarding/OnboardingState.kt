@@ -31,6 +31,9 @@ class OnboardingState {
     /** sedentary / light / moderate / active / veryActive */
     var activityLevel by mutableStateOf("sedentary")
 
+    /** "buildMuscle" or "maintain" — feeds TdeeCalculator's surplus decision. */
+    var goal by mutableStateOf("maintain")
+
     var foodTrackingEnabled by mutableStateOf(false)
     /** "macros" or "mealBalance" */
     var foodTrackingMode by mutableStateOf<String?>(null)

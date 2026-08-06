@@ -1,5 +1,6 @@
 package com.fueru.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.fueru.app.FueruApplication
 import com.fueru.app.data.AppDatabase
 import com.fueru.app.data.ResistanceFlowPrefs
@@ -43,6 +47,7 @@ import com.fueru.app.ui.components.FueruIgniteHoldButton
 import com.fueru.app.ui.components.FueruTextField
 import com.fueru.app.ui.theme.FueruColors
 import com.fueru.app.ui.theme.FueruType
+import com.fueru.app.ui.theme.Radius
 import com.fueru.app.ui.theme.Spacing
 import java.time.LocalDate
 import kotlinx.coroutines.delay
@@ -136,6 +141,21 @@ fun ResistanceFlowScreen(
             ),
         )
     }
+    // Immersive mode round — the meditation/guided-session timer (ACTION) already has no bottom
+    // nav to hide (this whole route sits outside tabRoutes), but nothing stopped a stray back
+    // press/gesture from abandoning the session mid-timer with no confirmation. Scoped to ACTION
+    // only, not every step of the flow — the rest of Resistance Flow already behaves like any other
+    // screen (back just leaves, same as always). Doesn't conflict with EscalationLockActivity's own
+    // pre-Ignite BackHandler: that one's only enabled before Ignite, and ACTION is always after it.
+    var showExitConfirm by remember { mutableStateOf(false) }
+    BackHandler(enabled = step == FlowStep.ACTION) { showExitConfirm = true }
+    if (showExitConfirm) {
+        ExitPracticeConfirmDialog(
+            onKeepGoing = { showExitConfirm = false },
+            onEnd = { showExitConfirm = false; onDone() },
+        )
+    }
+
     fun finishAndLog() {
         // step only moves to SUMMARY once both writes actually complete — SummaryStep reads the
         // last 3 sessions (sparkline + §6.3 fade check) on mount, so if it mounted before this
@@ -249,6 +269,28 @@ fun ResistanceFlowScreen(
 }
 
 // ---- Shared step chrome --------------------------------------------------------------------------
+
+/** Immersive mode round — same Dialog + Surface(SurfaceCard) styling WorkoutScreen's own dialogs use. */
+@Composable
+private fun ExitPracticeConfirmDialog(onKeepGoing: () -> Unit, onEnd: () -> Unit) {
+    Dialog(onDismissRequest = onKeepGoing) {
+        Surface(shape = RoundedCornerShape(Radius.lg), color = FueruColors.SurfaceCard) {
+            Column(
+                modifier = Modifier.padding(Spacing.space5),
+                verticalArrangement = Arrangement.spacedBy(Spacing.space3),
+            ) {
+                Text(text = "end this practice?", color = FueruColors.TextPrimary, style = FueruType.title)
+                Text(
+                    text = "Your progress up to this point won't be saved.",
+                    color = FueruColors.TextMuted,
+                    style = FueruType.body,
+                )
+                FueruButton(text = "Keep going", onClick = onKeepGoing, modifier = Modifier.fillMaxWidth())
+                FueruButton(text = "End practice", variant = FueruButtonVariant.Ghost, onClick = onEnd, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
 
 @Composable
 private fun StepScaffold(

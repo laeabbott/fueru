@@ -105,9 +105,13 @@ fun FueruScrollPicker(
                 ) {
                     Text(
                         text = label,
+                        // Recommended checked first, so it wins the tie when the user has actually
+                        // scrolled to the app's suggested value — otherwise that row would fall
+                        // through to the plain "selected" white and lose the "this is the
+                        // recommendation" signal, which is exactly the ambiguity this ordering fixes.
                         color = when {
-                            isSelected -> FueruColors.TextPrimary
                             index == recommendedIndex -> FueruColors.Fire4
+                            isSelected -> FueruColors.TextPrimary
                             else -> FueruColors.TextMuted
                         },
                         style = if (isSelected) FueruType.bodyLg else FueruType.body,

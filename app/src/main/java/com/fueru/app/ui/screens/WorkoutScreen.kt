@@ -1,5 +1,6 @@
 package com.fueru.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -98,7 +99,7 @@ import java.time.format.DateTimeFormatter
  * It does *not* remember mid-session exercise substitutions — see WorkoutSessionStore's doc comment.
  */
 @Composable
-fun WorkoutScreen(onOpenThisWeek: () -> Unit) {
+fun WorkoutScreen(onOpenThisWeek: () -> Unit, onSessionActiveChange: (Boolean) -> Unit = {}, onBack: () -> Unit = {}) {
     val application = LocalContext.current.applicationContext as FueruApplication
     val database = application.database
 
@@ -115,6 +116,13 @@ fun WorkoutScreen(onOpenThisWeek: () -> Unit) {
 
     var activeSession by remember { mutableStateOf<WorkoutSessionPlan?>(null) }
 
+    // Immersive-mode round — lets NavGraph hide the bottom tab bar for the duration of an active
+    // session, same as it's already hidden for every step of Resistance Flow (a different route
+    // entirely, not something this screen controls). Reported on every recomposition where the
+    // active/inactive state actually flips, not just once, since activeSession can go back to null
+    // (onFinished) without this composable leaving the WORKOUT route at all.
+    LaunchedEffect(activeSession != null) { onSessionActiveChange(activeSession != null) }
+
     when {
         !loaded -> Unit
         activeSession != null -> {
@@ -129,6 +137,7 @@ fun WorkoutScreen(onOpenThisWeek: () -> Unit) {
                     todayWorkout = todayWorkout?.copy(status = "completed", completedDate = System.currentTimeMillis())
                     refreshTrigger++
                 },
+                onExitRequested = onBack,
             )
         }
         todayWorkout?.status == "planned" -> {
@@ -293,10 +302,12 @@ private fun ActiveWorkoutSession(
     profile: UserProfile,
     plan: WorkoutSessionPlan,
     onFinished: () -> Unit,
+    onExitRequested: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val unit = remember { WeightUnitStore.get(context) }
+    var showExitConfirm by remember { mutableStateOf(false) }
 
     val resumed = remember(plan.scheduledWorkout.id) { WorkoutSessionStore.resumeFor(context, plan.scheduledWorkout.id) }
     val initialSlotIndex = (resumed?.slotIndex ?: 0).coerceIn(0, plan.slots.size - 1)
@@ -325,6 +336,18 @@ private fun ActiveWorkoutSession(
             nextWorkoutPreview = loadNextWorkoutPreview(database)
             sessionSetLogs = database.setLogDao().getForScheduledWorkout(plan.scheduledWorkout.id)
         }
+    }
+
+    // Immersive mode round — once the session's actually finished, the completion card has its own
+    // "Done" button and there's no more in-progress state to protect, so back behaves normally
+    // again. Progress up to any point is already durable via WorkoutSessionStore either way — this
+    // is purely about not losing your place in the flow to an accidental back press/gesture.
+    BackHandler(enabled = !finished) { showExitConfirm = true }
+    if (showExitConfirm) {
+        ExitConfirmDialog(
+            onKeepGoing = { showExitConfirm = false },
+            onEnd = { showExitConfirm = false; onExitRequested() },
+        )
     }
 
     if (finished) {
@@ -448,12 +471,14 @@ private fun ActiveWorkoutSession(
             .padding(Spacing.space5),
         verticalArrangement = Arrangement.spacedBy(Spacing.space4),
     ) {
-        Text(text = plan.dayLabel.uppercase(), color = FueruColors.TextMuted, style = FueruType.overline)
-        Text(
-            text = "exercise ${slotIndex + 1} of ${slots.size} · set $setNumber of ${slot.prescribedSet.sets}",
-            color = FueruColors.TextSecondary,
-            style = FueruType.caption,
-        )
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text(text = plan.dayLabel.uppercase(), color = FueruColors.TextMuted, style = FueruType.overline)
+            Text(
+                text = "exercise ${slotIndex + 1} of ${slots.size} · set $setNumber of ${slot.prescribedSet.sets}",
+                color = FueruColors.TextSecondary,
+                style = FueruType.caption,
+            )
+        }
 
         ExerciseFormImages(
             paths = slot.exercise.imageAssetPaths,
@@ -465,8 +490,14 @@ private fun ActiveWorkoutSession(
 
         Text(text = slot.exercise.name, color = FueruColors.TextPrimary, style = FueruType.headline)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2), verticalAlignment = Alignment.CenterVertically) {
             FueruTag(text = "tempo ${slot.prescribedSet.tempo}")
+            Text(
+                text = if (showInstructions) "hide how-to" else "how to",
+                color = FueruColors.Fire4,
+                style = FueruType.caption,
+                modifier = Modifier.clickable { showInstructions = !showInstructions },
+            )
             if (slot.prescribedSet.supersetGroup != null) {
                 FueruTag(text = "superset ${slot.prescribedSet.supersetGroup}", variant = FueruTagVariant.Fire)
             }
@@ -482,12 +513,6 @@ private fun ActiveWorkoutSession(
             Text(text = slot.prescribedSet.comment, color = FueruColors.TextMuted, style = FueruType.caption)
         }
 
-        Text(
-            text = if (showInstructions) "hide how-to" else "how to",
-            color = FueruColors.Fire4,
-            style = FueruType.caption,
-            modifier = Modifier.clickable { showInstructions = !showInstructions },
-        )
         if (showInstructions) {
             Text(text = slot.exercise.instructions, color = FueruColors.TextMuted, style = FueruType.caption)
         }
@@ -663,6 +688,32 @@ private fun ExerciseFormImages(paths: List<String>, modifier: Modifier = Modifie
 }
 
 // ---- Dialogs ---------------------------------------------------------------------------------
+
+/**
+ * Immersive mode round — intercepts an in-app back press/gesture during an active session so it
+ * can't accidentally abandon the workout. Only guards system back, not Home/app-switching/
+ * notification taps, which never route through BackHandler at all.
+ */
+@Composable
+private fun ExitConfirmDialog(onKeepGoing: () -> Unit, onEnd: () -> Unit) {
+    Dialog(onDismissRequest = onKeepGoing) {
+        Surface(shape = RoundedCornerShape(Radius.lg), color = FueruColors.SurfaceCard) {
+            Column(
+                modifier = Modifier.padding(Spacing.space5),
+                verticalArrangement = Arrangement.spacedBy(Spacing.space3),
+            ) {
+                Text(text = "end this workout?", color = FueruColors.TextPrimary, style = FueruType.title)
+                Text(
+                    text = "Your progress is saved — you can pick up right where you left off later.",
+                    color = FueruColors.TextMuted,
+                    style = FueruType.body,
+                )
+                FueruButton(text = "Keep going", onClick = onKeepGoing, modifier = Modifier.fillMaxWidth())
+                FueruButton(text = "End workout", variant = FueruButtonVariant.Ghost, onClick = onEnd, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
 
 @Composable
 private fun ShortfallDialog(

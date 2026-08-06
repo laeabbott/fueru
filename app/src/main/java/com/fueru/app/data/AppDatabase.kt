@@ -77,7 +77,9 @@ import com.fueru.app.data.entity.UserProfile
     // "fuwari" — guided session timer + configurable bottom tabs).
     // 12 -> 13: added Practice.actionVerb (scheduling & escalation alignment pass, §D — "I've
     // started" quick-start button's optional per-practice themed label).
-    version = 13,
+    // 13 -> 14: added UserProfile.goal ("buildMuscle" or "maintain"), feeding TdeeCalculator's
+    // surplus decision — follow-up round, onboarding didn't previously ask this.
+    version = 14,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

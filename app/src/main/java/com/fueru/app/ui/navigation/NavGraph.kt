@@ -6,7 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -74,7 +76,13 @@ fun FueruNavGraph(
     val tabRoutes = remember(tabPractices) {
         staticTabRoutes + tabPractices.map { FueruRoutes.practiceDetail(it.id) }
     }
-    val showBottomNav = currentRoute in tabRoutes
+    // Immersive mode round — Workout is a static tab route (so the nav shows during its normal
+    // preview/done states), but an *active* session shouldn't have the bottom nav competing for
+    // space or offering an un-confirmed way out. Resistance Flow (the meditation timer's route)
+    // needs no equivalent flag: it was never in tabRoutes to begin with, so it's already immersive
+    // for every step, not just the timer.
+    var workoutSessionActive by remember { mutableStateOf(false) }
+    val showBottomNav = currentRoute in tabRoutes && !(currentRoute == FueruRoutes.WORKOUT && workoutSessionActive)
 
     // An escalation notification tap (Stage 0/1, see NotificationHelper.resistanceFlowPendingIntent)
     // lands here. Known gap, not fixed this round: if this fires before Splash has finished routing
@@ -170,7 +178,11 @@ fun FueruNavGraph(
                 )
             }
             composable(FueruRoutes.WORKOUT) {
-                WorkoutScreen(onOpenThisWeek = { navController.navigate(FueruRoutes.THIS_WEEK) })
+                WorkoutScreen(
+                    onOpenThisWeek = { navController.navigate(FueruRoutes.THIS_WEEK) },
+                    onSessionActiveChange = { workoutSessionActive = it },
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(FueruRoutes.FUEL) { FuelScreen() }
             composable(FueruRoutes.PROGRESS) { ProgressScreen() }

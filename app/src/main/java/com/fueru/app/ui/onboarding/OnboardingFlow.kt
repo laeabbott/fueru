@@ -20,7 +20,7 @@ import com.fueru.app.data.entity.UserProfile
 import kotlinx.coroutines.launch
 
 private enum class OnboardingStep {
-    WELCOME, NAME, BASIC_INFO, BODY_WEIGHT, FITNESS_LEVEL, EQUIPMENT_PREFERENCE, BMR_FORMULA, ACTIVITY_LEVEL,
+    WELCOME, NAME, BASIC_INFO, BODY_WEIGHT, FITNESS_LEVEL, EQUIPMENT_PREFERENCE, BMR_FORMULA, ACTIVITY_LEVEL, GOAL,
     FOOD_TRACKING, CALENDAR_PERMISSION, NOTIFICATION_PERMISSION, SCHEDULE, PROGRAM_START, CELEBRATION,
 }
 
@@ -72,6 +72,7 @@ fun OnboardingFlow(onDone: () -> Unit) {
             OnboardingStep.EQUIPMENT_PREFERENCE -> EquipmentPreferenceStep(state = state, onNext = ::goNext)
             OnboardingStep.BMR_FORMULA -> BmrFormulaStep(state = state, onNext = ::goNext)
             OnboardingStep.ACTIVITY_LEVEL -> ActivityLevelStep(state = state, onNext = ::goNext)
+            OnboardingStep.GOAL -> GoalStep(state = state, onNext = ::goNext)
             OnboardingStep.FOOD_TRACKING -> FoodTrackingStep(state = state, onNext = ::goNext)
             OnboardingStep.CALENDAR_PERMISSION -> CalendarPermissionStep(state = state, onNext = ::goNext)
             OnboardingStep.NOTIFICATION_PERMISSION -> NotificationPermissionStep(state = state, onNext = ::goNext)
@@ -92,6 +93,7 @@ private suspend fun persistOnboarding(database: AppDatabase, state: OnboardingSt
             age = state.age,
             bmrFormulaVariant = state.bmrFormulaVariant,
             activityLevel = state.activityLevel,
+            goal = state.goal,
             strengthLevel = state.strengthLevel,
             foodTrackingEnabled = state.foodTrackingEnabled,
             foodTrackingMode = state.foodTrackingMode,

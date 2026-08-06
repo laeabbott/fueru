@@ -36,14 +36,31 @@ suspend fun loadWorkoutSessionPlan(database: AppDatabase, scheduledWorkout: Sche
 }
 
 /**
+ * True for the ~29 hand-picked exercises this app shipped with before the free-exercise-db catalog
+ * import — they reference a local bundled asset path (or, for the couple with no photos, an empty
+ * list), never a full URL. Catalog exercises always carry a full `https://...` path. Used to make
+ * sure the original set (things like "Bodyweight Walking Lunge") never gets silently squeezed out
+ * of a substitute list by the much larger catalog — see [loadSubstitutes].
+ */
+private fun isOriginalExercise(exercise: Exercise): Boolean =
+    exercise.imageAssetPaths.none { it.startsWith("http") }
+
+/**
  * Alternative exercises sharing the same primary muscle, for the "suggest a different exercise"
  * flow — sorted (not filtered) so exercises matching [equipmentPreference] come first, since
- * strictly filtering could leave zero options for some muscle groups. Capped at 30 so the picker
- * stays a reasonable length now that the catalog can be much larger than the original lean set.
+ * strictly filtering could leave zero options for some muscle groups. Original exercises sort
+ * ahead of that equipment tiebreak entirely: with ~873 catalog exercises now seeded, a muscle
+ * group can have 30+ equipment-matching catalog entries, which used to push original exercises
+ * whose equipment didn't match the user's preference out of the capped list below. Capped at 30 so
+ * the picker stays a reasonable length now that the catalog can be much larger than the original
+ * lean set — safe to do after the original-first sort since there are only ~29 originals total.
  */
 suspend fun loadSubstitutes(database: AppDatabase, exercise: Exercise, equipmentPreference: String?): List<Exercise> =
     database.exerciseDao().getByPrimaryMuscle(exercise.primaryMuscle, exercise.id)
-        .sortedByDescending { EquipmentPreference.matches(it.equipment, equipmentPreference) }
+        .sortedWith(
+            compareByDescending<Exercise> { isOriginalExercise(it) }
+                .thenByDescending { EquipmentPreference.matches(it.equipment, equipmentPreference) },
+        )
         .take(30)
 
 /** Persists a substitution for one slot of one scheduled workout — survives leaving/resuming the session and shows up for future previews of the same day. */
