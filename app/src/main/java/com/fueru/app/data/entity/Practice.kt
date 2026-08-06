@@ -28,4 +28,6 @@ data class Practice(
     val guidedSessionEnabled: Boolean = false,
     /** Whether this practice gets its own bottom-nav tab (routes straight to its detail screen), toggled from Settings' "practice tabs" section — independent of guidedSessionEnabled. */
     val showAsTab: Boolean = false,
+    /** Optional user-set verb for the "I've started" quick-start button (e.g. "fuwariing", "fueruing") — scheduling & escalation alignment pass, §D. Null falls back to a plain "I've started" label; deliberately a per-practice field rather than hardcoded name-matching, so any practice can get themed copy, not just the built-in modules. */
+    val actionVerb: String? = null,
 )

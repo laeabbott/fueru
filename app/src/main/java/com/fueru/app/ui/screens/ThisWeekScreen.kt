@@ -31,6 +31,7 @@ import com.fueru.app.data.allBusyBlocksForDay
 import com.fueru.app.data.autoFillRecurringWeek
 import com.fueru.app.data.entity.ProgramDay
 import com.fueru.app.data.entity.ScheduledWorkout
+import com.fueru.app.ui.components.FueruBusyBlocksSummary
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
@@ -211,7 +212,7 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
         FueruTimePickerDialog(
             initialHour = initial.first,
             initialMinute = initial.second,
-            extraContent = { BusyBlocksSummary(busyBlocks) },
+            extraContent = { FueruBusyBlocksSummary(busyBlocks) },
             onConfirm = { hour, minute ->
                 val minutes = DateUtils.minutesSinceMidnight(hour, minute)
                 scope.launch {
@@ -291,19 +292,3 @@ private fun formatShortDate(epochMillis: Long): String =
     Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .format(DateTimeFormatter.ofPattern("EEE, MMM d"))
-
-/** Silent when empty — whether that's a genuinely free day or READ_CALENDAR isn't granted, there's nothing useful to say. */
-@Composable
-private fun BusyBlocksSummary(blocks: List<BusyBlock>) {
-    if (blocks.isEmpty()) return
-    Column(modifier = Modifier.padding(bottom = Spacing.space3)) {
-        Text(text = "busy that day", color = FueruColors.TextMuted, style = FueruType.overline)
-        blocks.take(5).forEach { block ->
-            Text(
-                text = "${DateUtils.formatTime(block.startMillis)}–${DateUtils.formatTime(block.endMillis)} ${block.title}",
-                color = FueruColors.TextSecondary,
-                style = FueruType.caption,
-            )
-        }
-    }
-}

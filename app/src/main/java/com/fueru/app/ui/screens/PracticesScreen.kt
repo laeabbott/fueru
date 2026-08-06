@@ -99,7 +99,7 @@ fun PracticesScreen(onOpenPractice: (Long) -> Unit, onBack: () -> Unit) {
 
     if (showAddDialog) {
         AddPracticeDialog(
-            onAdd = { name, frequencyType, frequencyCount ->
+            onAdd = { name, frequencyType, frequencyCount, actionVerb ->
                 scope.launch {
                     database.practiceDao().insert(
                         Practice(
@@ -107,6 +107,7 @@ fun PracticesScreen(onOpenPractice: (Long) -> Unit, onBack: () -> Unit) {
                             targetFrequencyType = frequencyType,
                             targetFrequencyCount = frequencyCount,
                             createdDate = System.currentTimeMillis(),
+                            actionVerb = actionVerb,
                         ),
                     )
                 }
@@ -145,10 +146,14 @@ private fun PracticeListCard(practice: Practice, today: TodayPracticeSlot?, onCl
 }
 
 @Composable
-private fun AddPracticeDialog(onAdd: (name: String, frequencyType: String, frequencyCount: Int) -> Unit, onDismiss: () -> Unit) {
+private fun AddPracticeDialog(
+    onAdd: (name: String, frequencyType: String, frequencyCount: Int, actionVerb: String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
     var name by remember { mutableStateOf("") }
     var frequencyType by remember { mutableStateOf("per_week") }
     var frequencyCountText by remember { mutableStateOf("3") }
+    var actionVerbText by remember { mutableStateOf("") }
     val frequencyCount = frequencyCountText.toIntOrNull()
 
     Dialog(onDismissRequest = onDismiss) {
@@ -179,11 +184,17 @@ private fun AddPracticeDialog(onAdd: (name: String, frequencyType: String, frequ
                     label = "Target count",
                     placeholder = "3",
                 )
+                FueruTextField(
+                    value = actionVerbText,
+                    onValueChange = { actionVerbText = it },
+                    label = "Quick-start verb (optional)",
+                    placeholder = "e.g. fueruing",
+                )
 
                 FueruButton(
                     text = "Add practice",
                     enabled = name.isNotBlank() && frequencyCount != null && frequencyCount > 0,
-                    onClick = { onAdd(name.trim(), frequencyType, frequencyCount!!) },
+                    onClick = { onAdd(name.trim(), frequencyType, frequencyCount!!, actionVerbText.trim().ifBlank { null }) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 FueruButton(text = "Cancel", variant = FueruButtonVariant.Ghost, onClick = onDismiss, modifier = Modifier.fillMaxWidth())

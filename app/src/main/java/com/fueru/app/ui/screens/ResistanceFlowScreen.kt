@@ -28,9 +28,12 @@ import androidx.compose.ui.unit.dp
 import com.fueru.app.FueruApplication
 import com.fueru.app.data.AppDatabase
 import com.fueru.app.data.ResistanceFlowPrefs
+import com.fueru.app.data.mondayOfThisWeek
+import com.fueru.app.data.remainingSlotsIfTargetMet
 import com.fueru.app.data.entity.GuidedSession
 import com.fueru.app.data.entity.Practice
 import com.fueru.app.data.entity.PracticeLogEntry
+import com.fueru.app.data.entity.PracticeScheduledSlot
 import com.fueru.app.data.entity.ResistanceSession
 import com.fueru.app.ui.components.FueruBreathingAnimation
 import com.fueru.app.ui.components.FueruButton
@@ -57,6 +60,8 @@ private val attributionOptions = listOf(
     "honestly, no idea — but I did it",
 )
 private val timerChoicesSeconds = listOf(60, 120, 300)
+
+private val dayNames = mapOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 7 to "Sun")
 
 // ---- Guided session (module round 1, "fuwari") --------------------------------------------------
 private val guidedDurationPresetMinutes = listOf(5, 20, 45, 60, 90)
@@ -578,11 +583,15 @@ private fun SummaryStep(database: AppDatabase, practice: Practice, stepsUsed: In
     var recentSteps by remember { mutableStateOf<List<Int>>(emptyList()) }
     var offerFade by remember { mutableStateOf(false) }
     var fadeAccepted by remember { mutableStateOf(false) }
+    // §E — same weekly-target-met-early offer PracticeDetailScreen's manual logging path shows,
+    // computed here too since finishing the flow is also a "done" write.
+    var weeklyTargetOfferSlots by remember { mutableStateOf<List<PracticeScheduledSlot>>(emptyList()) }
 
     LaunchedEffect(practice.id) {
         val recent = database.resistanceSessionDao().getRecentForPractice(practice.id, 3)
         recentSteps = recent.map { it.stepsUsed }.reversed()
         offerFade = !practice.shortFlowEnabled && recent.size == 3 && recent.all { it.stepsUsed <= 3 }
+        weeklyTargetOfferSlots = remainingSlotsIfTargetMet(database, practice.id)
     }
 
     StepScaffold(title = "that's it") {
@@ -594,6 +603,40 @@ private fun SummaryStep(database: AppDatabase, practice: Practice, stepsUsed: In
                         modifier = Modifier
                             .size(width = 20.dp, height = (count * 12).dp)
                             .background(FueruColors.Fire4),
+                    )
+                }
+            }
+        }
+        if (weeklyTargetOfferSlots.isNotEmpty()) {
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    Text(
+                        text = "Already hit this week's target for ${practice.name}. Want to skip one of the remaining days?",
+                        color = FueruColors.TextPrimary,
+                        style = FueruType.body,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                        weeklyTargetOfferSlots.forEach { slot ->
+                            FueruButton(
+                                text = "Skip ${dayNames[slot.dayOfWeek] ?: "?"}",
+                                variant = FueruButtonVariant.Secondary,
+                                onClick = {
+                                    scope.launch {
+                                        val slotDate = mondayOfThisWeek().plusDays((slot.dayOfWeek - 1).toLong())
+                                        database.practiceLogEntryDao().upsert(
+                                            PracticeLogEntry(practiceId = practice.id, date = slotDate.toString(), status = "skip"),
+                                        )
+                                        weeklyTargetOfferSlots = weeklyTargetOfferSlots - slot
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    Text(
+                        text = "not now",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                        modifier = Modifier.clickable { weeklyTargetOfferSlots = emptyList() },
                     )
                 }
             }

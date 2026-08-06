@@ -88,6 +88,21 @@ object NotificationHelper {
         NotificationManagerCompat.from(context).notify(WORKOUT_NOTIFICATION_ID, notification)
     }
 
+    /** §C of the scheduling & escalation alignment pass — fires 15 min *before* the scheduled time, a heads-up distinct from Stage 0's at-time nudge. Uses its own notification-id offset (not just [escalationNotificationId] on the bare practiceId) since Stage 0 already claims that id for this same practice. */
+    @SuppressLint("MissingPermission") // guarded by canPostNotifications()
+    fun notifyEscalationUpcoming(context: Context, practiceId: Long, practiceName: String) {
+        if (!canPostNotifications(context)) return
+        ensureEscalationChannel(context)
+        val notification = NotificationCompat.Builder(context, ESCALATION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_bell)
+            .setContentTitle(practiceName)
+            .setContentText("starting in 15 min")
+            .setContentIntent(resistanceFlowPendingIntent(context, practiceId))
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(context).notify(upcomingNotificationId(practiceId), notification)
+    }
+
     /** Stage 0 (§7.2) — plain notification, tapping opens Resistance Flow for this practice directly (via MainActivity's deep-link extra, see FueruNavGraph). */
     @SuppressLint("MissingPermission") // guarded by canPostNotifications()
     fun notifyEscalationNudge(context: Context, practiceId: Long, practiceName: String) {
@@ -178,6 +193,9 @@ object NotificationHelper {
     }
 
     private fun escalationNotificationId(id: Long) = (ESCALATION_NOTIFICATION_ID_BASE + id).toInt()
+
+    /** Distinct offset from [escalationNotificationId] so the §C heads-up and Stage 0's nudge — both keyed on the same practiceId — never collide and clobber each other's notification. */
+    private fun upcomingNotificationId(practiceId: Long) = (ESCALATION_NOTIFICATION_ID_BASE + 10_000_000L + practiceId).toInt()
 
     private fun resistanceFlowPendingIntent(context: Context, practiceId: Long): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {

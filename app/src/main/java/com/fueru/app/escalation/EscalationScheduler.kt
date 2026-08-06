@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import com.fueru.app.data.AppDatabase
+import com.fueru.app.data.PracticeStartStore
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -17,7 +18,11 @@ const val STAGE_PERSIST = 1
 const val STAGE_LOCK = 2
 const val STAGE_WARNING = 3
 const val STAGE_CONSEQUENCE = 4
+/** Scheduling & escalation alignment pass, §C — a heads-up fired *before* the slot's own time, not instead of Stage 0. Kept a single digit like every other stage so requestCodeFor's `practiceId * 10 + stage` scheme still holds with no collision risk. */
+const val STAGE_UPCOMING = 5
 
+/** How far ahead of the scheduled time the §C heads-up fires. */
+private const val UPCOMING_LEAD_MINUTES = 15L
 private const val STAGE_1_OFFSET_MINUTES = 15L
 private const val STAGE_2_OFFSET_MINUTES = 30L
 // §7.2's own copy is internally inconsistent ("Stage 3 fires in 10 minutes" — but Stage 3 is what's
@@ -52,12 +57,17 @@ object EscalationScheduler {
 
         for (slot in slots) {
             val alreadyLogged = database.practiceLogEntryDao().getForPracticeAndDate(slot.practiceId, todayIso) != null
-            if (alreadyLogged) {
+            // §D — "I've started" holds off the rest of today's escalation for this practice even
+            // though nothing's logged yet; reopening the app later today shouldn't re-arm alarms
+            // for something already marked underway.
+            val alreadyStarted = PracticeStartStore.isStarted(context, slot.practiceId, todayIso)
+            if (alreadyLogged || alreadyStarted) {
                 cancelForPractice(context, slot.practiceId)
                 continue
             }
             val practice = database.practiceDao().getById(slot.practiceId) ?: continue
             val baseMillis = todayAtMinutes(slot.timeOfDay!!)
+            scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_UPCOMING, baseMillis - UPCOMING_LEAD_MINUTES * 60_000L)
             scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_NUDGE, baseMillis)
             scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_PERSIST, baseMillis + STAGE_1_OFFSET_MINUTES * 60_000L)
             scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_LOCK, baseMillis + STAGE_2_OFFSET_MINUTES * 60_000L)
@@ -74,7 +84,7 @@ object EscalationScheduler {
 
     fun cancelForPractice(context: Context, practiceId: Long) {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
-        listOf(STAGE_NUDGE, STAGE_PERSIST, STAGE_LOCK, STAGE_WARNING, STAGE_CONSEQUENCE).forEach { stage ->
+        listOf(STAGE_UPCOMING, STAGE_NUDGE, STAGE_PERSIST, STAGE_LOCK, STAGE_WARNING, STAGE_CONSEQUENCE).forEach { stage ->
             alarmManager.cancel(pendingIntentFor(context, practiceId, "", stage))
         }
     }

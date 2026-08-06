@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,16 +23,31 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import coil3.compose.AsyncImage
 import com.fueru.app.FueruApplication
 import com.fueru.app.R
+import com.fueru.app.data.AppDatabase
+import com.fueru.app.data.BusyBlock
 import com.fueru.app.data.DateUtils
 import com.fueru.app.data.PracticeScoring
+import com.fueru.app.data.PracticeStartStore
+import com.fueru.app.data.ScheduleConflict
+import com.fueru.app.data.allBusyBlocksForDay
+import com.fueru.app.data.celebration.GiphyApi
+import com.fueru.app.data.findScheduleConflicts
+import com.fueru.app.data.mondayOfThisWeek
+import com.fueru.app.data.remainingSlotsIfTargetMet
 import com.fueru.app.data.entity.GuidedSession
 import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.data.entity.PracticeScheduledSlot
+import com.fueru.app.escalation.EscalationScheduler
+import com.fueru.app.ui.components.FueruBusyBlocksSummary
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
@@ -88,9 +105,32 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
         .observeRecentForPractice(practiceId, 10)
         .collectAsState(initial = emptyList<GuidedSession>())
 
+    // §E — offer to skip a remaining scheduled day this week once the weekly target's already met.
+    var weeklyTargetOfferSlots by remember(practiceId) { mutableStateOf<List<PracticeScheduledSlot>>(emptyList()) }
+
     fun logToday(status: String) {
         scope.launch {
             database.practiceLogEntryDao().upsert(PracticeLogEntry(practiceId = practiceId, date = today, status = status))
+            weeklyTargetOfferSlots = if (status == "done" || status == "partial") {
+                remainingSlotsIfTargetMet(database, practiceId)
+            } else {
+                emptyList()
+            }
+        }
+    }
+
+    // §D — "I've started": a direct quick-start, not tied to reaching Ignite in Resistance Flow.
+    // Doesn't log the practice as done (starting isn't finishing) — just holds off today's
+    // remaining escalation and marks the practice as underway so reopening the app later today
+    // doesn't re-arm alarms for it.
+    var justStarted by remember(practiceId) { mutableStateOf(false) }
+    var startedGifUrl by remember(practiceId) { mutableStateOf<String?>(null) }
+    fun markStartedNow() {
+        scope.launch {
+            EscalationScheduler.cancelForPractice(application, practiceId)
+            PracticeStartStore.markStarted(application, practiceId, today)
+            startedGifUrl = GiphyApi.randomCelebrationGifUrl(milestone = false)
+            justStarted = true
         }
     }
 
@@ -168,18 +208,79 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
             }
         }
 
-        FueruCard(modifier = Modifier.fillMaxWidth(), glow = true) {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                Text(
-                    text = "I know, I don't want to either. That's fine — this is what the flow is for.",
-                    color = FueruColors.TextMuted,
-                    style = FueruType.caption,
-                )
-                FueruButton(
-                    text = "I'm resisting this",
-                    onClick = { onStartResistanceFlow(current.shortFlowEnabled) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        if (weeklyTargetOfferSlots.isNotEmpty()) {
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    Text(
+                        text = "Already hit this week's target for ${current.name}. Want to skip one of the remaining days?",
+                        color = FueruColors.TextPrimary,
+                        style = FueruType.body,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                        weeklyTargetOfferSlots.forEach { slot ->
+                            FueruButton(
+                                text = "Skip ${dayNames[slot.dayOfWeek] ?: "?"}",
+                                variant = FueruButtonVariant.Secondary,
+                                onClick = {
+                                    scope.launch {
+                                        val slotDate = mondayOfThisWeek().plusDays((slot.dayOfWeek - 1).toLong())
+                                        database.practiceLogEntryDao().upsert(
+                                            PracticeLogEntry(practiceId = practiceId, date = slotDate.toString(), status = "skip"),
+                                        )
+                                        weeklyTargetOfferSlots = weeklyTargetOfferSlots - slot
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    Text(
+                        text = "not now",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                        modifier = Modifier.clickable { weeklyTargetOfferSlots = emptyList() },
+                    )
+                }
+            }
+        }
+
+        if (justStarted) {
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    if (startedGifUrl != null) {
+                        AsyncImage(
+                            model = startedGifUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxWidth().size(140.dp).clip(RoundedCornerShape(Radius.lg)),
+                        )
+                    }
+                    Text(
+                        text = "nice — didn't need the ramp-up today",
+                        color = FueruColors.TextPrimary,
+                        style = FueruType.body,
+                    )
+                }
+            }
+        } else {
+            FueruCard(modifier = Modifier.fillMaxWidth(), glow = true) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    Text(
+                        text = "I know, I don't want to either. That's fine — this is what the flow is for.",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                    )
+                    FueruButton(
+                        text = "I'm resisting this",
+                        onClick = { onStartResistanceFlow(current.shortFlowEnabled) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    FueruButton(
+                        text = current.actionVerb?.let { "$it!" } ?: "I've started",
+                        variant = FueruButtonVariant.Secondary,
+                        onClick = { markStartedNow() },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
 
@@ -248,6 +349,8 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
 
     if (showScheduleDialog) {
         EditScheduleDialog(
+            database = database,
+            practiceId = practiceId,
             currentSlots = slots,
             onSave = { newSlots ->
                 scope.launch {
@@ -269,10 +372,11 @@ private val sessionDateFormatter = DateTimeFormatter.ofPattern("MMM d")
 private fun formatSessionDate(epochMillis: Long): String =
     Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(sessionDateFormatter)
 
+private val dayNames = mapOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 7 to "Sun")
+
 /** "no schedule set" / "Mon, Wed, Fri" / "Mon, Wed, Fri · 7:00 AM" (only shows a time if every slot shares the same one — the common case, since v1's editor only ever writes one shared time across all selected days). */
 private fun formatScheduleSummary(slots: List<PracticeScheduledSlot>): String {
     if (slots.isEmpty()) return "no schedule set"
-    val dayNames = mapOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 7 to "Sun")
     val days = slots.sortedBy { it.dayOfWeek }.joinToString(", ") { dayNames[it.dayOfWeek] ?: "?" }
     val times = slots.mapNotNull { it.timeOfDay }.distinct()
     return if (times.size == 1) "$days · ${DateUtils.formatMinutesSinceMidnight(times[0])}" else days
@@ -286,6 +390,8 @@ private fun formatScheduleSummary(slots: List<PracticeScheduledSlot>): String {
  */
 @Composable
 private fun EditScheduleDialog(
+    database: AppDatabase,
+    practiceId: Long,
     currentSlots: List<PracticeScheduledSlot>,
     onSave: (List<Pair<Int, Int?>>) -> Unit,
     onDismiss: () -> Unit,
@@ -293,6 +399,31 @@ private fun EditScheduleDialog(
     var selectedDays by remember { mutableStateOf(currentSlots.map { it.dayOfWeek }.toSet()) }
     var timeMinutes by remember { mutableStateOf(currentSlots.firstOrNull { it.timeOfDay != null }?.timeOfDay) }
     var showTimePicker by remember { mutableStateOf(false) }
+
+    // Scheduling & escalation alignment pass, §A — a 20min buffer between different practices'
+    // scheduled times, so back-to-back days actually leave room to transition. Re-checked whenever
+    // the picked days/time change.
+    var conflicts by remember { mutableStateOf<List<ScheduleConflict>>(emptyList()) }
+    LaunchedEffect(selectedDays, timeMinutes) {
+        conflicts = findScheduleConflicts(database, practiceId, selectedDays, timeMinutes)
+    }
+
+    // §B — calendar/.ics busy-block awareness, same mechanism This Week's time picker already uses
+    // (allBusyBlocksForDay), adapted for a recurring weekly slot: shown per selected day, computed
+    // against that day's *next upcoming occurrence* rather than one specific date.
+    val context = LocalContext.current
+    var busyBlocksByDay by remember { mutableStateOf<Map<Int, List<BusyBlock>>>(emptyMap()) }
+    LaunchedEffect(selectedDays) {
+        val weekStart = DateUtils.startOfWeek(System.currentTimeMillis())
+        val todayStart = DateUtils.todayEpochMillis()
+        busyBlocksByDay = selectedDays.associateWith { dow ->
+            // A day-of-week already past this week means its *next* occurrence is next week's,
+            // not a stale date in the past.
+            val candidate = DateUtils.dateForDayOfWeek(weekStart, dow)
+            val effective = if (candidate < todayStart) candidate + 7 * 86_400_000L else candidate
+            allBusyBlocksForDay(context, effective)
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(Radius.lg), color = FueruColors.SurfaceCard) {
@@ -324,8 +455,18 @@ private fun EditScheduleDialog(
                         modifier = Modifier.padding(start = Spacing.space2).clickable { showTimePicker = true },
                     )
                 }
+                if (conflicts.isNotEmpty()) {
+                    Text(
+                        text = conflicts.joinToString("\n") {
+                            "too close to ${it.otherPracticeName} on ${it.dayLabel} — needs 20 min either side"
+                        },
+                        color = FueruColors.SignalDanger,
+                        style = FueruType.caption,
+                    )
+                }
                 FueruButton(
                     text = "Save schedule",
+                    enabled = conflicts.isEmpty(),
                     onClick = { onSave(selectedDays.map { it to timeMinutes }) },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -344,6 +485,15 @@ private fun EditScheduleDialog(
                 showTimePicker = false
             },
             onDismiss = { showTimePicker = false },
+            extraContent = {
+                selectedDays.sorted().forEach { dow ->
+                    val blocks = busyBlocksByDay[dow].orEmpty()
+                    if (blocks.isNotEmpty()) {
+                        Text(text = dayNames[dow] ?: "", color = FueruColors.TextMuted, style = FueruType.caption)
+                        FueruBusyBlocksSummary(blocks)
+                    }
+                }
+            },
         )
     }
 }

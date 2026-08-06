@@ -75,7 +75,9 @@ import com.fueru.app.data.entity.UserProfile
     // 10 -> 11: added Charity + ConsequenceEvent + Practice.stickCharityEnabled (Stage 3/4 pledge mode, §7.3/§7.4).
     // 11 -> 12: added GuidedSession + Practice.guidedSessionEnabled/showAsTab (first practice module,
     // "fuwari" — guided session timer + configurable bottom tabs).
-    version = 12,
+    // 12 -> 13: added Practice.actionVerb (scheduling & escalation alignment pass, §D — "I've
+    // started" quick-start button's optional per-practice themed label).
+    version = 13,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

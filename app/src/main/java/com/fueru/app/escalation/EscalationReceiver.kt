@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.fueru.app.FueruApplication
+import com.fueru.app.data.PracticeStartStore
 import com.fueru.app.notifications.NotificationHelper
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
@@ -31,9 +32,11 @@ class EscalationReceiver : BroadcastReceiver() {
                 val today = LocalDate.now().toString()
                 val alreadyLogged = application.database.practiceLogEntryDao()
                     .getForPracticeAndDate(practiceId, today) != null
-                if (alreadyLogged) return@launch
+                val alreadyStarted = PracticeStartStore.isStarted(context, practiceId, today)
+                if (alreadyLogged || alreadyStarted) return@launch
 
                 when (stage) {
+                    STAGE_UPCOMING -> NotificationHelper.notifyEscalationUpcoming(context, practiceId, practiceName)
                     STAGE_NUDGE -> NotificationHelper.notifyEscalationNudge(context, practiceId, practiceName)
                     STAGE_PERSIST -> NotificationHelper.notifyEscalationPersist(context, practiceId, practiceName)
                     STAGE_LOCK -> EscalationLockService.start(context, practiceId, practiceName)
