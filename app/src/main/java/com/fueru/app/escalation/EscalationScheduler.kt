@@ -31,6 +31,11 @@ private const val STAGE_2_OFFSET_MINUTES = 30L
 private const val STAGE_3_OFFSET_MINUTES = 45L
 private const val STAGE_4_OFFSET_MINUTES = 55L
 
+/** BOOT_COMPLETED rescheduling round — when the self-re-arming daily reschedule alarm fires each day. A few minutes past midnight, not exactly on it, as a small DST/day-boundary buffer. */
+private const val DAILY_RESCHEDULE_HOUR = 0
+private const val DAILY_RESCHEDULE_MINUTE = 5
+private const val DAILY_RESCHEDULE_REQUEST_CODE = 999_999
+
 /**
  * Project brief §7.2, Stages 0-2 — exact-alarm scheduling only, no notification/UI logic here (see
  * EscalationReceiver for what actually happens when a stage fires). No Room table for escalation
@@ -38,10 +43,11 @@ private const val STAGE_4_OFFSET_MINUTES = 55L
  * "does a PracticeLogEntry exist for today" — checked again at fire time in EscalationReceiver,
  * since a slot can get logged in the gap between scheduling and firing.
  *
- * Scheduling trigger is app-open only for v1 (called from FueruApplication.onCreate) — a day the
- * user never opens the app at all won't get its alarms scheduled. Known limitation, not fixed this
- * round; see the Phase 4 plan for what would close it (BOOT_COMPLETED receiver / daily WorkManager
- * job to schedule tomorrow's alarms proactively).
+ * Scheduling used to be app-open only (FueruApplication.onCreate) — a day the app was never opened
+ * got zero alarms scheduled. Closed by the BOOT_COMPLETED rescheduling round: [scheduleDailyRescheduleAlarm]
+ * arms a self-re-arming exact alarm (DailyRescheduleReceiver) that calls this function once daily
+ * regardless of whether the app is ever opened, and BootCompletedReceiver re-arms both after a
+ * reboot or app update (which otherwise clear every AlarmManager alarm outright).
  */
 object EscalationScheduler {
 
@@ -80,6 +86,34 @@ object EscalationScheduler {
                 scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_CONSEQUENCE, baseMillis + STAGE_4_OFFSET_MINUTES * 60_000L)
             }
         }
+    }
+
+    /**
+     * BOOT_COMPLETED rescheduling round — sets one exact alarm for the next occurrence of
+     * [DAILY_RESCHEDULE_HOUR]:[DAILY_RESCHEDULE_MINUTE] (today's if still ahead, otherwise
+     * tomorrow's), targeting [DailyRescheduleReceiver]. That receiver calls
+     * [scheduleTodaysEscalations] and then calls this function again for the *next* day — a
+     * self-re-arming one-shot alarm, since exact RTC_WAKEUP alarms aren't natively repeating.
+     */
+    fun scheduleDailyRescheduleAlarm(context: Context) {
+        val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
+        if (!EscalationPermissions.canScheduleExactAlarms(context)) return
+
+        val zone = ZoneId.systemDefault()
+        var trigger = LocalDate.now().atStartOfDay(zone)
+            .plusHours(DAILY_RESCHEDULE_HOUR.toLong())
+            .plusMinutes(DAILY_RESCHEDULE_MINUTE.toLong())
+            .toInstant().toEpochMilli()
+        if (trigger <= System.currentTimeMillis()) trigger += 24 * 60 * 60_000L
+
+        val intent = Intent(context, DailyRescheduleReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            DAILY_RESCHEDULE_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pendingIntent)
     }
 
     fun cancelForPractice(context: Context, practiceId: Long) {

@@ -17,6 +17,9 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- BOOT_COMPLETED rescheduling round — re-arms escalation alarms after a reboot or app update,
+         both of which clear every AlarmManager exact alarm outright. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".FueruApplication"
@@ -40,6 +43,23 @@
         <receiver
             android:name=".escalation.EscalationReceiver"
             android:exported="false" />
+
+        <!-- BOOT_COMPLETED rescheduling round — self-re-arming daily trigger, only ever fired by this
+             app's own PendingIntent. -->
+        <receiver
+            android:name=".escalation.DailyRescheduleReceiver"
+            android:exported="false" />
+
+        <!-- BOOT_COMPLETED rescheduling round — the only exported receiver in this app, since these
+             are genuine system broadcasts. -->
+        <receiver
+            android:name=".escalation.BootCompletedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".escalation.EscalationLockService"

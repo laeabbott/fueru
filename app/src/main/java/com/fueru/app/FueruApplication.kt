@@ -24,10 +24,11 @@ class FueruApplication : Application() {
         // check, self-heals if a schema migration ever leaves the program table empty.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             ensureSeeded(this@FueruApplication, database)
-            // App-open-triggered escalation scheduling (§7.2 Stages 0-2) — see the Phase 4 plan's
-            // "scheduling trigger" note: a day the app is never opened won't get alarms scheduled,
-            // a known v1 limitation, not a BOOT_COMPLETED/daily-WorkManager job yet.
             EscalationScheduler.scheduleTodaysEscalations(this@FueruApplication, database)
+            // BOOT_COMPLETED rescheduling round — also (re)arm the daily reschedule alarm here as
+            // defense in depth, covering the case where exact-alarm permission gets granted after
+            // boot (BootCompletedReceiver's own attempt would have silently no-op'd until then).
+            EscalationScheduler.scheduleDailyRescheduleAlarm(this@FueruApplication)
         }
         scheduleDailyNudge()
     }
