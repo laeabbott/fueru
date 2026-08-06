@@ -69,6 +69,7 @@ fun HomeScreen(
     onOpenPractices: () -> Unit,
     onOpenPractice: (Long) -> Unit,
     onOpenFuel: () -> Unit,
+    onStartFuwari: () -> Unit,
 ) {
     val application = LocalContext.current.applicationContext as FueruApplication
     val database = application.database
@@ -138,6 +139,24 @@ fun HomeScreen(
 
         if (profile.foodTrackingEnabled) {
             FoodChecklistCard(database = database, profile = profile, onOpenFuel = onOpenFuel)
+        }
+
+        FuwariCard(onStartFuwari = onStartFuwari)
+    }
+}
+
+// ---- Fuwari quick-start card --------------------------------------------------------------------
+
+/** fuwari round — a foundational card, always shown (fuwari is seeded on first launch, see ensureFuwariSeeded), same one-tap-direct-action language as the Workout/Fuel cards above it. */
+@Composable
+private fun FuwariCard(onStartFuwari: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+        Text(text = "fuwari", style = FueruType.wordmarkSm.copy(brush = FueruGradients.fireLogo))
+        FueruCard(modifier = Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                Text(text = "a quiet minute, whenever you need one", color = FueruColors.TextPrimary, style = FueruType.bodyLg)
+                FueruButton(text = "Begin session", onClick = onStartFuwari, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import com.fueru.app.data.AppDatabase
 import com.fueru.app.data.PracticeStartStore
+import com.fueru.app.data.processDailyVacations
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -52,6 +53,11 @@ private const val DAILY_RESCHEDULE_REQUEST_CODE = 999_999
 object EscalationScheduler {
 
     suspend fun scheduleTodaysEscalations(context: Context, database: AppDatabase) {
+        // Vacation-practices round — piggybacks on this function's existing "runs once a day
+        // regardless of app-open state" guarantee (all three call sites — app launch, the daily
+        // reschedule alarm, boot/update — already land here) rather than adding new call sites.
+        processDailyVacations(context, database)
+
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         if (!EscalationPermissions.canScheduleExactAlarms(context)) return
 
@@ -72,6 +78,15 @@ object EscalationScheduler {
                 continue
             }
             val practice = database.practiceDao().getById(slot.practiceId) ?: continue
+            // Vacation-practices round — no alarms while vacationed.
+            val onVacation = practice.vacationUntilDate
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?.let { !it.isBefore(today) }
+                ?: false
+            if (onVacation) {
+                cancelForPractice(context, practice.id)
+                continue
+            }
             val baseMillis = todayAtMinutes(slot.timeOfDay!!)
             scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_UPCOMING, baseMillis - UPCOMING_LEAD_MINUTES * 60_000L)
             scheduleStage(context, alarmManager, practice.id, practice.name, STAGE_NUDGE, baseMillis)

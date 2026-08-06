@@ -3,6 +3,7 @@ package com.fueru.app.data.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Update
 import com.fueru.app.data.entity.CustomFood
 import kotlinx.coroutines.flow.Flow
 
@@ -21,4 +22,8 @@ interface CustomFoodDao {
 
     @Insert
     suspend fun insert(food: CustomFood): Long
+
+    /** Custom-food-editing round. */
+    @Update
+    suspend fun update(food: CustomFood)
 }

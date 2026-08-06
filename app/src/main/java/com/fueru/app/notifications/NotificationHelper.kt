@@ -192,6 +192,21 @@ object NotificationHelper {
         NotificationManagerCompat.from(context).notify(escalationNotificationId(0L), notification)
     }
 
+    private const val VACATION_NOTIFICATION_ID_BASE = 4000
+
+    /** Vacation-practices round — fires on the last vacation day, using the plain planning/workout-nudge channel (not the escalation one — this is informational, not an alert). */
+    @SuppressLint("MissingPermission") // guarded by canPostNotifications()
+    fun notifyVacationEnding(context: Context, practiceId: Long, practiceName: String) {
+        if (!canPostNotifications(context)) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_bell)
+            .setContentTitle(practiceName)
+            .setContentText("back on tomorrow")
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(context).notify((VACATION_NOTIFICATION_ID_BASE + practiceId).toInt(), notification)
+    }
+
     private fun escalationNotificationId(id: Long) = (ESCALATION_NOTIFICATION_ID_BASE + id).toInt()
 
     /** Distinct offset from [escalationNotificationId] so the §C heads-up and Stage 0's nudge — both keyed on the same practiceId — never collide and clobber each other's notification. */

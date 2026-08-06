@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.fueru.app.BuildConfig
 import com.fueru.app.FueruApplication
@@ -141,6 +143,9 @@ fun FuelScreen() {
     var showAddFood by remember { mutableStateOf(false) }
     var showAddCustomFood by remember { mutableStateOf(false) }
     var showCombineFoods by remember { mutableStateOf(false) }
+    // Custom-food-editing round.
+    var showManageFoods by remember { mutableStateOf(false) }
+    var editingFood by remember { mutableStateOf<CustomFood?>(null) }
 
     Column(
         modifier = Modifier
@@ -241,6 +246,12 @@ fun FuelScreen() {
                         onClick = { showCombineFoods = true },
                     )
                 }
+                Text(
+                    text = "manage my foods",
+                    color = FueruColors.Fire4,
+                    style = FueruType.caption,
+                    modifier = Modifier.clickable { showManageFoods = true },
+                )
             }
         }
 
@@ -266,8 +277,9 @@ fun FuelScreen() {
     if (showAddCustomFood) {
         AddCustomFoodDialog(
             database = database,
-            onSaved = { showAddCustomFood = false },
-            onDismiss = { showAddCustomFood = false },
+            existing = editingFood,
+            onSaved = { showAddCustomFood = false; editingFood = null },
+            onDismiss = { showAddCustomFood = false; editingFood = null },
         )
     }
 
@@ -277,6 +289,69 @@ fun FuelScreen() {
             onSaved = { showCombineFoods = false },
             onDismiss = { showCombineFoods = false },
         )
+    }
+
+    if (showManageFoods) {
+        ManageFoodsDialog(
+            database = database,
+            onPick = { food ->
+                editingFood = food
+                showManageFoods = false
+                showAddCustomFood = true
+            },
+            onDismiss = { showManageFoods = false },
+        )
+    }
+}
+
+/** Custom-food-editing round — every saved custom food/recipe, tap one to edit it. */
+@Composable
+private fun ManageFoodsDialog(database: AppDatabase, onPick: (CustomFood) -> Unit, onDismiss: () -> Unit) {
+    val foods by database.customFoodDao().observeAll().collectAsState(initial = emptyList())
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(Radius.lg), color = FueruColors.SurfaceCard) {
+            Column(modifier = Modifier.fillMaxWidth().padding(Spacing.space5)) {
+                Text(text = "my foods", color = FueruColors.TextPrimary, style = FueruType.title)
+                if (foods.isEmpty()) {
+                    Text(
+                        text = "Nothing saved yet — custom foods and combined recipes show up here.",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                        modifier = Modifier.padding(top = Spacing.space3),
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .padding(top = Spacing.space3)
+                            .heightIn(max = 400.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        foods.forEach { food ->
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onPick(food) }
+                                    .padding(vertical = Spacing.space2),
+                            ) {
+                                Text(text = food.name, color = FueruColors.TextPrimary, style = FueruType.body)
+                                Text(
+                                    text = "${food.kcalPer100g} kcal/100g",
+                                    color = FueruColors.TextMuted,
+                                    style = FueruType.caption,
+                                )
+                            }
+                        }
+                    }
+                }
+                FueruButton(
+                    text = "Close",
+                    variant = FueruButtonVariant.Ghost,
+                    onClick = onDismiss,
+                    modifier = Modifier.padding(top = Spacing.space3),
+                )
+            }
+        }
     }
 }
 
@@ -437,15 +512,25 @@ private fun AddFoodDialog(database: AppDatabase, date: Long, onLogged: (FoodLogE
     }
 }
 
-/** Manual entry for a food not worth searching USDA for — a homemade dish, a packaged item with its own label, etc. Once saved it's just a [CustomFood] row, searchable/loggable from "+ Add food" like anything else. */
+/**
+ * Manual entry for a food not worth searching USDA for — a homemade dish, a packaged item with its
+ * own label, etc. Once saved it's just a [CustomFood] row, searchable/loggable from "+ Add food"
+ * like anything else. Custom-food-editing round: also doubles as the *edit* form for any existing
+ * [CustomFood] — including ones originally built via [CombineFoodsDialog] — when [existing] is
+ * non-null. Recipes edit their already-computed resulting numbers directly here rather than
+ * reopening the ingredient picker: a recipe's individual ingredients' own per-100g macros are never
+ * persisted after saving (see CustomFoodIngredient's doc comment — kept for display only), so there's
+ * nothing to reconstruct a re-editable ingredient list from. Matches CustomFood's own stated design:
+ * once saved, a recipe is indistinguishable from a manually-entered food.
+ */
 @Composable
-private fun AddCustomFoodDialog(database: AppDatabase, onSaved: () -> Unit, onDismiss: () -> Unit) {
+private fun AddCustomFoodDialog(database: AppDatabase, existing: CustomFood? = null, onSaved: () -> Unit, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var name by remember { mutableStateOf("") }
-    var proteinText by remember { mutableStateOf("") }
-    var carbsText by remember { mutableStateOf("") }
-    var fatText by remember { mutableStateOf("") }
-    var kcalText by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var proteinText by remember { mutableStateOf(existing?.proteinPer100g?.toString() ?: "") }
+    var carbsText by remember { mutableStateOf(existing?.carbsPer100g?.toString() ?: "") }
+    var fatText by remember { mutableStateOf(existing?.fatPer100g?.toString() ?: "") }
+    var kcalText by remember { mutableStateOf(existing?.kcalPer100g?.toString() ?: "") }
 
     val protein = proteinText.toFloatOrNull()
     val carbs = carbsText.toFloatOrNull()
@@ -456,7 +541,7 @@ private fun AddCustomFoodDialog(database: AppDatabase, onSaved: () -> Unit, onDi
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(Radius.lg), color = FueruColors.SurfaceCard) {
             Column(modifier = Modifier.fillMaxWidth().padding(Spacing.space5)) {
-                Text(text = "add a custom food", color = FueruColors.TextPrimary, style = FueruType.title)
+                Text(text = if (existing != null) "edit food" else "add a custom food", color = FueruColors.TextPrimary, style = FueruType.title)
                 Text(
                     text = "Enter macros per 100g — same basis USDA uses, so it mixes cleanly with searched foods.",
                     color = FueruColors.TextMuted,
@@ -503,16 +588,28 @@ private fun AddCustomFoodDialog(database: AppDatabase, onSaved: () -> Unit, onDi
                     enabled = canSave,
                     onClick = {
                         scope.launch {
-                            database.customFoodDao().insert(
-                                CustomFood(
-                                    name = name,
-                                    proteinPer100g = protein ?: 0f,
-                                    carbsPer100g = carbs ?: 0f,
-                                    fatPer100g = fat ?: 0f,
-                                    kcalPer100g = (kcal ?: 0f).roundToInt(),
-                                    createdAt = System.currentTimeMillis(),
-                                ),
-                            )
+                            if (existing != null) {
+                                database.customFoodDao().update(
+                                    existing.copy(
+                                        name = name,
+                                        proteinPer100g = protein ?: 0f,
+                                        carbsPer100g = carbs ?: 0f,
+                                        fatPer100g = fat ?: 0f,
+                                        kcalPer100g = (kcal ?: 0f).roundToInt(),
+                                    ),
+                                )
+                            } else {
+                                database.customFoodDao().insert(
+                                    CustomFood(
+                                        name = name,
+                                        proteinPer100g = protein ?: 0f,
+                                        carbsPer100g = carbs ?: 0f,
+                                        fatPer100g = fat ?: 0f,
+                                        kcalPer100g = (kcal ?: 0f).roundToInt(),
+                                        createdAt = System.currentTimeMillis(),
+                                    ),
+                                )
+                            }
                             onSaved()
                         }
                     },

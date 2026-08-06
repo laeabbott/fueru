@@ -30,4 +30,12 @@ data class Practice(
     val showAsTab: Boolean = false,
     /** Optional user-set verb for the "I've started" quick-start button (e.g. "fuwariing", "fueruing") — scheduling & escalation alignment pass, §D. Null falls back to a plain "I've started" label; deliberately a per-practice field rather than hardcoded name-matching, so any practice can get themed copy, not just the built-in modules. */
     val actionVerb: String? = null,
+    /**
+     * ISO date (yyyy-MM-dd) of the *last* day this practice is on vacation — resumes the day
+     * after. Null means not on vacation. While set (today <= this date): not prompted on Home, no
+     * escalation alarms scheduled, and a daily "skip" PracticeLogEntry is auto-written so
+     * PracticeScoring's existing skip-exclusion protects the score — see PracticeVacation.kt for
+     * the one place all of this is decided, run once daily regardless of whether the app opens.
+     */
+    val vacationUntilDate: String? = null,
 )

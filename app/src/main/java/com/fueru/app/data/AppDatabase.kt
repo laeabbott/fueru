@@ -79,7 +79,8 @@ import com.fueru.app.data.entity.UserProfile
     // started" quick-start button's optional per-practice themed label).
     // 13 -> 14: added UserProfile.goal ("buildMuscle" or "maintain"), feeding TdeeCalculator's
     // surplus decision — follow-up round, onboarding didn't previously ask this.
-    version = 14,
+    // 14 -> 15: added Practice.vacationUntilDate (vacation-practices round).
+    version = 15,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

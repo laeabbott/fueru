@@ -26,12 +26,20 @@ import com.fueru.app.ui.onboarding.OnboardingFlow
 import com.fueru.app.ui.screens.CharitiesScreen
 import com.fueru.app.ui.screens.ConsequencePledgeScreen
 import com.fueru.app.ui.screens.FuelScreen
+import com.fueru.app.ui.screens.FuwariQuickStartScreen
 import com.fueru.app.ui.screens.HomeScreen
 import com.fueru.app.ui.screens.PracticeDetailScreen
 import com.fueru.app.ui.screens.PracticesScreen
 import com.fueru.app.ui.screens.ProgressScreen
 import com.fueru.app.ui.screens.ResistanceFlowScreen
+import com.fueru.app.ui.screens.SettingsCalendarScreen
+import com.fueru.app.ui.screens.SettingsDangerScreen
+import com.fueru.app.ui.screens.SettingsFoodScreen
+import com.fueru.app.ui.screens.SettingsNotificationsScreen
+import com.fueru.app.ui.screens.SettingsPracticesScreen
+import com.fueru.app.ui.screens.SettingsProfileScreen
 import com.fueru.app.ui.screens.SettingsScreen
+import com.fueru.app.ui.screens.SettingsStakesScreen
 import com.fueru.app.ui.screens.SplashScreen
 import com.fueru.app.ui.screens.ThisWeekScreen
 import com.fueru.app.ui.screens.UpcomingWorkoutScreen
@@ -111,13 +119,15 @@ fun FueruNavGraph(
         if (foodTrackingEnabled) {
             add(FueruBottomNavItem("Fuel", R.drawable.ic_fork_knife, R.drawable.ic_fork_knife_fill, FueruRoutes.FUEL))
         }
-        add(FueruBottomNavItem("Progress", R.drawable.ic_chart_line_up, R.drawable.ic_chart_line_up_fill, FueruRoutes.PROGRESS))
-        // No existing drawable is generic enough for an arbitrary user-named practice (the set above
-        // is all screen-specific) — reusing the fire-branded flame icon for every practice tab rather
-        // than building an icon-picker system nobody asked for.
+        // fuwari round — Progress always stays the rightmost tab, so every practice tab (fuwari,
+        // now foundational and default-on, plus any other showAsTab practice) is inserted *before*
+        // it rather than after. No existing drawable is generic enough for an arbitrary user-named
+        // practice (the set above is all screen-specific) — reusing the fire-branded flame icon for
+        // every practice tab rather than building an icon-picker system nobody asked for.
         tabPractices.forEach { practice ->
             add(FueruBottomNavItem(practice.name, R.drawable.ic_flame_fill, R.drawable.ic_flame_fill, FueruRoutes.practiceDetail(practice.id)))
         }
+        add(FueruBottomNavItem("Progress", R.drawable.ic_chart_line_up, R.drawable.ic_chart_line_up_fill, FueruRoutes.PROGRESS))
     }
 
     Scaffold(
@@ -175,7 +185,11 @@ fun FueruNavGraph(
                             restoreState = true
                         }
                     },
+                    onStartFuwari = { navController.navigate(FueruRoutes.FUWARI_QUICKSTART) },
                 )
+            }
+            composable(FueruRoutes.FUWARI_QUICKSTART) {
+                FuwariQuickStartScreen(onDone = { navController.popBackStack() })
             }
             composable(FueruRoutes.WORKOUT) {
                 WorkoutScreen(
@@ -207,12 +221,38 @@ fun FueruNavGraph(
             composable(FueruRoutes.SETTINGS) {
                 SettingsScreen(
                     onBack = { navController.popBackStack() },
+                    onOpenCategory = { route -> navController.navigate(route) },
+                )
+            }
+            composable(FueruRoutes.SETTINGS_PROFILE) {
+                SettingsProfileScreen(onBack = { navController.popBackStack() })
+            }
+            composable(FueruRoutes.SETTINGS_NOTIFICATIONS) {
+                SettingsNotificationsScreen(onBack = { navController.popBackStack() })
+            }
+            composable(FueruRoutes.SETTINGS_FOOD) {
+                SettingsFoodScreen(onBack = { navController.popBackStack() })
+            }
+            composable(FueruRoutes.SETTINGS_CALENDAR) {
+                SettingsCalendarScreen(onBack = { navController.popBackStack() })
+            }
+            composable(FueruRoutes.SETTINGS_PRACTICES) {
+                SettingsPracticesScreen(onBack = { navController.popBackStack() })
+            }
+            composable(FueruRoutes.SETTINGS_STAKES) {
+                SettingsStakesScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenCharities = { navController.navigate(FueruRoutes.CHARITIES) },
+                )
+            }
+            composable(FueruRoutes.SETTINGS_DANGER) {
+                SettingsDangerScreen(
+                    onBack = { navController.popBackStack() },
                     onDataWiped = {
                         navController.navigate(FueruRoutes.SPLASH) {
                             popUpTo(navController.graph.id) { inclusive = true }
                         }
                     },
-                    onOpenCharities = { navController.navigate(FueruRoutes.CHARITIES) },
                 )
             }
             composable(FueruRoutes.CHARITIES) {

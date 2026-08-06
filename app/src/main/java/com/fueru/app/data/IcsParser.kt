@@ -24,6 +24,7 @@ object IcsParser {
         val events = mutableListOf<BusyBlock>()
         var inEvent = false
         var summary: String? = null
+        var uid: String? = null
         var start: Long? = null
         var end: Long? = null
 
@@ -33,6 +34,7 @@ object IcsParser {
                 line == "BEGIN:VEVENT" -> {
                     inEvent = true
                     summary = null
+                    uid = null
                     start = null
                     end = null
                 }
@@ -40,12 +42,19 @@ object IcsParser {
                     val s = start
                     val e = end
                     if (inEvent && s != null && e != null) {
-                        events.add(BusyBlock(title = summary ?: "Busy", startMillis = s, endMillis = e))
+                        val title = summary ?: "Busy"
+                        // UID is a standard RFC 5545 property, virtually always present — falls back
+                        // to a content hash only for a malformed file missing it, so "ignore this
+                        // event" (calendar-redesign round) still has a stable-enough id to persist
+                        // against for a given file's contents.
+                        val id = "ics:" + (uid ?: "${title.hashCode()}:$s:$e")
+                        events.add(BusyBlock(id = id, title = title, startMillis = s, endMillis = e))
                     }
                     inEvent = false
                 }
                 !inEvent -> Unit
                 line.startsWith("SUMMARY") -> summary = line.substringAfter(":", "").ifBlank { null }
+                line.startsWith("UID") -> uid = line.substringAfter(":", "").ifBlank { null }
                 line.startsWith("DTSTART") -> start = parseDateTimeProperty(line)
                 line.startsWith("DTEND") -> end = parseDateTimeProperty(line)
             }

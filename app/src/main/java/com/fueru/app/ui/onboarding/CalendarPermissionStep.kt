@@ -11,9 +11,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.fueru.app.R
+import com.fueru.app.data.IcsCalendarStore
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.theme.FueruColors
@@ -22,9 +24,21 @@ import com.fueru.app.ui.theme.Spacing
 
 @Composable
 fun CalendarPermissionStep(state: OnboardingState, onNext: () -> Unit) {
+    val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         state.calendarPermissionRequested = true
         onNext()
+    }
+    // Onboarding .ics round — an alternative for anyone whose calendar isn't a synced Android
+    // account at all (the user's own example: no Google account, so READ_CALENDAR would return
+    // nothing useful) — same IcsCalendarStore.save() This Week's own "import a calendar" link
+    // already uses, just reachable here too instead of only after onboarding.
+    val icsPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            IcsCalendarStore.save(context, uri)
+            state.calendarPermissionRequested = true
+            onNext()
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.space4)) {
         Icon(
@@ -44,6 +58,11 @@ fun CalendarPermissionStep(state: OnboardingState, onNext: () -> Unit) {
             text = "Allow calendar access",
             onClick = { launcher.launch(Manifest.permission.READ_CALENDAR) },
             modifier = Modifier.padding(top = Spacing.space2),
+        )
+        FueruButton(
+            text = "Upload a calendar file (.ics) instead",
+            variant = FueruButtonVariant.Secondary,
+            onClick = { icsPickerLauncher.launch(arrayOf("text/calendar", "application/octet-stream", "*/*")) },
         )
         FueruButton(
             text = "Skip for now",

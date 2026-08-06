@@ -57,6 +57,12 @@ suspend fun computeTodaysPracticePlan(database: AppDatabase): List<TodayPractice
 
     return todaysSlots.mapNotNull { slot ->
         val practice = database.practiceDao().getById(slot.practiceId) ?: return@mapNotNull null
+        // Vacation-practices round — not prompted at all while vacationed, not just de-emphasized.
+        val onVacation = practice.vacationUntilDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.let { !it.isBefore(today) }
+            ?: false
+        if (onVacation) return@mapNotNull null
         val entry = database.practiceLogEntryDao().getForPracticeAndDate(practice.id, todayIso)
         val isOverdue = entry == null && slot.timeOfDay != null && nowMinutes >= slot.timeOfDay
         TodayPracticeSlot(practice = practice, slot = slot, loggedStatus = entry?.status, isOverdue = isOverdue)

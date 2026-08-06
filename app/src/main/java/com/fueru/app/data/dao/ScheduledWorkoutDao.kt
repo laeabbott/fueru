@@ -1,6 +1,7 @@
 package com.fueru.app.data.dao
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -32,4 +33,8 @@ interface ScheduledWorkoutDao {
 
     @Update
     suspend fun update(workout: ScheduledWorkout)
+
+    /** Calendar-redesign round — tapping an already-placed block on the weekly grid un-schedules it, returning that ProgramDay to the unscheduled pool. */
+    @Delete
+    suspend fun delete(workout: ScheduledWorkout)
 }

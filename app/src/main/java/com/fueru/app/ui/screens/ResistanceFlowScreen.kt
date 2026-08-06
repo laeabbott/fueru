@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.fueru.app.FueruApplication
 import com.fueru.app.data.AppDatabase
+import com.fueru.app.data.GuidedSessionDefaultStore
 import com.fueru.app.data.ResistanceFlowPrefs
 import com.fueru.app.data.mondayOfThisWeek
 import com.fueru.app.data.remainingSlotsIfTargetMet
@@ -70,7 +71,6 @@ private val dayNames = mapOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 t
 
 // ---- Guided session (module round 1, "fuwari") --------------------------------------------------
 private val guidedDurationPresetMinutes = listOf(5, 20, 45, 60, 90)
-private const val GUIDED_DEFAULT_SECONDS = 20 * 60
 private val guidedDefaultTypes = listOf("meditation", "dharma study")
 
 private data class SessionData(
@@ -136,7 +136,10 @@ fun ResistanceFlowScreen(
                 timerSeconds = ResistanceFlowPrefs.getTimerSeconds(
                     context,
                     practiceId,
-                    default = if (current.guidedSessionEnabled) GUIDED_DEFAULT_SECONDS else 120,
+                    // fuwari round — one shared "default guided-session length" setting (Settings'
+                    // Practices category), not a hardcoded 20 minutes, so it's the same concept
+                    // whether reached from here or the Home quick-start button.
+                    default = if (current.guidedSessionEnabled) GuidedSessionDefaultStore.getMinutes(context) * 60 else 120,
                 ),
             ),
         )

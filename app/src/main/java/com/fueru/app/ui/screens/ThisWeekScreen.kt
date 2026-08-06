@@ -27,17 +27,15 @@ import com.fueru.app.FueruApplication
 import com.fueru.app.data.BusyBlock
 import com.fueru.app.data.DateUtils
 import com.fueru.app.data.IcsCalendarStore
-import com.fueru.app.data.allBusyBlocksForDay
+import com.fueru.app.data.IgnoredEventStore
+import com.fueru.app.data.allBusyBlocksForWeek
 import com.fueru.app.data.autoFillRecurringWeek
-import com.fueru.app.data.entity.ProgramDay
 import com.fueru.app.data.entity.ScheduledWorkout
-import com.fueru.app.ui.components.FueruBusyBlocksSummary
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
-import com.fueru.app.ui.components.FueruTimePickerDialog
-import com.fueru.app.ui.components.FueruWeekdayChip
-import com.fueru.app.ui.components.isoWeekdayLabels
+import com.fueru.app.ui.components.FueruWeekScheduleGrid
+import com.fueru.app.ui.components.GridScheduledBlock
 import com.fueru.app.ui.theme.FueruColors
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Spacing
@@ -45,12 +43,6 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-
-/** What the time picker dialog is currently being shown for. */
-private sealed class TimePickTarget {
-    data class NewAssignment(val day: ProgramDay, val dayOfWeek: Int) : TimePickTarget()
-    data class EditExisting(val scheduledWorkout: ScheduledWorkout) : TimePickTarget()
-}
 
 @Composable
 fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
@@ -63,7 +55,6 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
 
     val weekStart = remember { DateUtils.startOfWeek(DateUtils.todayEpochMillis()) }
     var autoFillTrigger by remember { mutableIntStateOf(0) }
-    var pickTarget by remember { mutableStateOf<TimePickTarget?>(null) }
 
     var icsImported by remember { mutableStateOf(IcsCalendarStore.savedUri(application) != null) }
     val icsPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -88,6 +79,46 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
 
     val programDayById = remember(programDays) { programDays.associateBy { it.id } }
     val unscheduledDays = programDays.filter { day -> scheduledThisWeek.none { it.programDayId == day.id } }
+
+    // Calendar-redesign round — one combined 7-day fetch for the grid, re-run whenever the ICS
+    // import state or the ignored-events set could have changed (icsImported flip, or
+    // busyRefreshTrigger after an "ignore").
+    var busyRefreshTrigger by remember { mutableIntStateOf(0) }
+    var busyBlocks by remember { mutableStateOf<List<BusyBlock>>(emptyList()) }
+    LaunchedEffect(icsImported, busyRefreshTrigger) {
+        busyBlocks = allBusyBlocksForWeek(application, weekStart)
+    }
+
+    fun scheduleDay(dayOfWeek: Int, minutesSinceMidnight: Int) {
+        val day = unscheduledDays.firstOrNull() ?: return
+        val date = DateUtils.dateForDayOfWeek(weekStart, dayOfWeek)
+        scope.launch {
+            database.scheduledWorkoutDao().insert(
+                ScheduledWorkout(
+                    weekStartDate = weekStart,
+                    programDayId = day.id,
+                    scheduledDate = date,
+                    scheduledTime = DateUtils.combineDateAndMinutes(date, minutesSinceMidnight),
+                    status = "planned",
+                    completedDate = null,
+                ),
+            )
+            autoFillTrigger++
+        }
+    }
+
+    fun unschedule(workout: ScheduledWorkout) {
+        scope.launch { database.scheduledWorkoutDao().delete(workout) }
+    }
+
+    val scheduledDates = remember(scheduledThisWeek) { scheduledThisWeek.map { it.scheduledDate }.toSet() }
+    val remainingPlaceableDayCount = remember(scheduledDates, weekStart) {
+        (1..7).count { dow ->
+            val date = DateUtils.dateForDayOfWeek(weekStart, dow)
+            date >= DateUtils.todayEpochMillis() && date !in scheduledDates
+        }
+    }
+    val overflowCount = (unscheduledDays.size - remainingPlaceableDayCount).coerceAtLeast(0)
 
     Column(
         modifier = Modifier
@@ -134,7 +165,6 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
                     ScheduledWorkoutCard(
                         dayLabel = day?.dayLabel ?: "Workout",
                         scheduled = scheduled,
-                        onClick = { pickTarget = TimePickTarget.EditExisting(scheduled) },
                         onViewExercises = { onViewExercises(scheduled.id) },
                     )
                 }
@@ -172,77 +202,32 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
                 }
             }
             else -> {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                    Text(text = "still need a date", color = FueruColors.TextSecondary, style = FueruType.title)
-                    unscheduledDays.forEach { day ->
-                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
-                            Text(text = day.dayLabel, color = FueruColors.TextPrimary, style = FueruType.body)
-                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2), verticalAlignment = Alignment.CenterVertically) {
-                                isoWeekdayLabels.forEach { (dow, label) ->
-                                    FueruWeekdayChip(label = label, selected = false) {
-                                        pickTarget = TimePickTarget.NewAssignment(day, dow)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                FueruWeekScheduleGrid(
+                    weekStart = weekStart,
+                    busyBlocks = busyBlocks,
+                    scheduledThisWeek = scheduledThisWeek.map { sw ->
+                        GridScheduledBlock(sw, programDayById[sw.programDayId]?.dayLabel ?: "Workout")
+                    },
+                    pendingDayLabel = unscheduledDays.firstOrNull()?.dayLabel,
+                    onIgnoreEvent = { block ->
+                        IgnoredEventStore.ignore(application, block.id)
+                        busyRefreshTrigger++
+                    },
+                    onUnschedule = ::unschedule,
+                    onCommit = ::scheduleDay,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (overflowCount > 0) {
+                    Text(
+                        text = "no more room this week for $overflowCount more day${if (overflowCount == 1) "" else "s"} — pick ${if (overflowCount == 1) "it" else "them"} up next week.",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                    )
                 }
             }
         }
 
         FueruButton(text = "Back to Home", onClick = onBack, variant = FueruButtonVariant.Ghost)
-    }
-
-    pickTarget?.let { target ->
-        val pickDate = when (target) {
-            is TimePickTarget.NewAssignment -> DateUtils.dateForDayOfWeek(weekStart, target.dayOfWeek)
-            is TimePickTarget.EditExisting -> target.scheduledWorkout.scheduledDate
-        }
-        var busyBlocks by remember(pickDate) { mutableStateOf<List<BusyBlock>>(emptyList()) }
-        LaunchedEffect(pickDate) {
-            busyBlocks = allBusyBlocksForDay(application, pickDate)
-        }
-
-        val existingTime = (target as? TimePickTarget.EditExisting)?.scheduledWorkout?.scheduledTime
-        val initial = existingTime?.let {
-            val local = Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault())
-            local.hour to local.minute
-        } ?: (9 to 0)
-
-        FueruTimePickerDialog(
-            initialHour = initial.first,
-            initialMinute = initial.second,
-            extraContent = { FueruBusyBlocksSummary(busyBlocks) },
-            onConfirm = { hour, minute ->
-                val minutes = DateUtils.minutesSinceMidnight(hour, minute)
-                scope.launch {
-                    when (target) {
-                        is TimePickTarget.NewAssignment -> {
-                            val date = DateUtils.dateForDayOfWeek(weekStart, target.dayOfWeek)
-                            database.scheduledWorkoutDao().insert(
-                                ScheduledWorkout(
-                                    weekStartDate = weekStart,
-                                    programDayId = target.day.id,
-                                    scheduledDate = date,
-                                    scheduledTime = DateUtils.combineDateAndMinutes(date, minutes),
-                                    status = "planned",
-                                    completedDate = null,
-                                ),
-                            )
-                        }
-                        is TimePickTarget.EditExisting -> {
-                            val sw = target.scheduledWorkout
-                            database.scheduledWorkoutDao().update(
-                                sw.copy(scheduledTime = DateUtils.combineDateAndMinutes(sw.scheduledDate, minutes)),
-                            )
-                        }
-                    }
-                    autoFillTrigger++
-                }
-                pickTarget = null
-            },
-            onDismiss = { pickTarget = null },
-        )
     }
 }
 
@@ -250,15 +235,10 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
 private fun ScheduledWorkoutCard(
     dayLabel: String,
     scheduled: ScheduledWorkout,
-    onClick: () -> Unit,
     onViewExercises: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    FueruCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
-    ) {
+    FueruCard(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -268,7 +248,7 @@ private fun ScheduledWorkoutCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Text(text = formatShortDate(scheduled.scheduledDate), color = FueruColors.TextMuted, style = FueruType.caption)
                     Text(
-                        text = scheduled.scheduledTime?.let { DateUtils.formatTime(it) } ?: "tap to set a time",
+                        text = scheduled.scheduledTime?.let { DateUtils.formatTime(it) } ?: "no time set",
                         color = if (scheduled.scheduledTime != null) FueruColors.Fire4 else FueruColors.TextMuted,
                         style = FueruType.caption,
                     )
@@ -279,7 +259,7 @@ private fun ScheduledWorkoutCard(
                 color = FueruColors.Fire4,
                 style = FueruType.caption,
                 modifier = Modifier.clickable(
-                    interactionSource = remember { MutableInteractionSource() },
+                    interactionSource = interactionSource,
                     indication = null,
                     onClick = onViewExercises,
                 ),
