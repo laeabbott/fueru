@@ -1,5 +1,6 @@
 package com.fueru.app.data
 
+import androidx.compose.runtime.Immutable
 import com.fueru.app.data.entity.Exercise
 import com.fueru.app.data.entity.PrescribedSet
 import com.fueru.app.data.entity.ScheduledWorkout
@@ -11,6 +12,8 @@ data class WorkoutSlot(
     val exercise: Exercise,
 )
 
+/** [Immutable]: `slots` is a plain List, always freshly built by [loadWorkoutSessionPlan] and never mutated in place — see Exercise.kt's doc comment for the fuller Compose-stability rationale. */
+@Immutable
 data class WorkoutSessionPlan(
     val scheduledWorkout: ScheduledWorkout,
     val dayLabel: String,

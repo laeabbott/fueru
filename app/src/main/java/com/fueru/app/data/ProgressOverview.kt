@@ -1,5 +1,6 @@
 package com.fueru.app.data
 
+import androidx.compose.runtime.Immutable
 import com.fueru.app.data.entity.Exercise
 import com.fueru.app.data.entity.ScheduledWorkout
 import com.fueru.app.data.entity.SetLog
@@ -14,6 +15,8 @@ data class ExerciseProgress(
     val lastSetLog: SetLog,
 )
 
+/** [Immutable]: both fields are plain Lists, always freshly built by [loadProgressOverview] — see Exercise.kt's doc comment for the fuller Compose-stability rationale. */
+@Immutable
 data class ProgressOverview(
     val completedSessions: List<CompletedSession>,
     val exerciseProgress: List<ExerciseProgress>,

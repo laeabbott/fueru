@@ -7,6 +7,16 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Compose stability audit -- re-run `./gradlew compileDebugKotlin --rerun-tasks` after touching
+// this and read build/compose_compiler/reports/*-composables.txt for skippability per composable
+// (unstable params force a whole subtree to recompose) and *-classes.txt for which of this app's
+// own types the compiler couldn't infer as stable. No Android Studio Layout Inspector available in
+// this dev environment, so this is the CLI-only equivalent. See HANDOFF.md for round notes.
+composeCompiler {
+    reportsDestination = layout.buildDirectory.dir("compose_compiler/reports")
+    metricsDestination = layout.buildDirectory.dir("compose_compiler/metrics")
+}
+
 // Secrets live in local.properties (machine-local, gitignored), never in a checked-in source file.
 val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")

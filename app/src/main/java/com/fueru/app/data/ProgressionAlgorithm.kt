@@ -2,6 +2,7 @@ package com.fueru.app.data
 
 import com.fueru.app.data.entity.Exercise
 import com.fueru.app.data.entity.PrescribedSet
+import com.fueru.app.data.entity.SetLog
 import com.fueru.app.data.entity.UserProfile
 import com.fueru.app.data.seed.StartingWeightSeed
 
@@ -44,12 +45,31 @@ suspend fun suggestProgression(
     unit: WeightUnit,
     excludeScheduledWorkoutId: Long,
 ): ProgressionSuggestion {
-    val hasWeight = exerciseHasWeight(exercise.equipment)
     // Excludes the workout currently in progress — without this, sets already logged earlier in
     // *today's* session would be mistaken for "last session" and the suggestion would climb every
     // single set instead of holding steady until the next real session (the bug the user reported).
     val history = database.setLogDao().getAllForExercise(exercise.id)
         .filter { it.scheduledWorkoutId != excludeScheduledWorkoutId }
+    return computeProgression(history, exercise, prescribedSet, profile, unit)
+}
+
+/**
+ * The actual decision logic above, pulled out as a pure function so it's unit-testable without a
+ * database — see `ProgressionAlgorithmTest`. [history] must already be every logged set for
+ * [exercise], most-recent-first (matching `SetLogDao.getAllForExercise`'s own
+ * `ORDER BY timestamp DESC`), with the in-progress workout's own sets already filtered out —
+ * [suggestProgression] above is the thin suspend wrapper that fetches and filters, then delegates
+ * here. No `System.currentTimeMillis()`/`LocalDate.now()` dependency either way — every decision
+ * comes from the `SetLog` fields themselves, not wall-clock time.
+ */
+fun computeProgression(
+    history: List<SetLog>,
+    exercise: Exercise,
+    prescribedSet: PrescribedSet,
+    profile: UserProfile,
+    unit: WeightUnit,
+): ProgressionSuggestion {
+    val hasWeight = exerciseHasWeight(exercise.equipment)
     val lastSessionId = history.firstOrNull()?.scheduledWorkoutId
 
     if (lastSessionId == null) {
