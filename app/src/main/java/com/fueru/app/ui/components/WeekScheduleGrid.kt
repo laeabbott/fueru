@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -40,7 +41,6 @@ import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.TextStyle
-import java.util.Locale
 
 /** One already-scheduled workout for the grid to render, paired with its day label for display. */
 data class GridScheduledBlock(val scheduledWorkout: ScheduledWorkout, val dayLabel: String)
@@ -85,6 +85,9 @@ fun FueruWeekScheduleGrid(
     LaunchedEffect(pendingDayLabel) { staged = null }
     var ignoreTarget by remember { mutableStateOf<BusyBlock?>(null) }
 
+    // Lint round -- reads through LocalLocale (observable, recomposes if the user changes the
+    // system locale) instead of Locale.getDefault() (a one-time, non-observable read).
+    val locale = LocalLocale.current.platformLocale
     val today = DateUtils.todayEpochMillis()
     val scheduledByDay = remember(scheduledThisWeek) {
         scheduledThisWeek.associateBy { block ->
@@ -123,7 +126,7 @@ fun FueruWeekScheduleGrid(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()),
+                        text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale),
                         color = if (isToday) FueruColors.Fire4 else FueruColors.TextMuted,
                         style = FueruType.overline,
                     )
