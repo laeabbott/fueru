@@ -21,6 +21,11 @@
          both of which clear every AlarmManager exact alarm outright. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- In-app-update round — launches the system package installer for a self-downloaded APK
+         (no Play Store). Granted contextually from Settings, not at launch — same convention as
+         every other special permission in this file (see AppUpdatePermissions.kt). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".FueruApplication"
         android:allowBackup="true"

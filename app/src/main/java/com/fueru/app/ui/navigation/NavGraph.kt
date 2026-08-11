@@ -32,6 +32,7 @@ import com.fueru.app.ui.screens.PracticeDetailScreen
 import com.fueru.app.ui.screens.PracticesScreen
 import com.fueru.app.ui.screens.ProgressScreen
 import com.fueru.app.ui.screens.ResistanceFlowScreen
+import com.fueru.app.ui.screens.SettingsAboutScreen
 import com.fueru.app.ui.screens.SettingsCalendarScreen
 import com.fueru.app.ui.screens.SettingsDangerScreen
 import com.fueru.app.ui.screens.SettingsFoodScreen
@@ -244,6 +245,9 @@ fun FueruNavGraph(
                     onBack = { navController.popBackStack() },
                     onOpenCharities = { navController.navigate(FueruRoutes.CHARITIES) },
                 )
+            }
+            composable(FueruRoutes.SETTINGS_ABOUT) {
+                SettingsAboutScreen(onBack = { navController.popBackStack() })
             }
             composable(FueruRoutes.SETTINGS_DANGER) {
                 SettingsDangerScreen(

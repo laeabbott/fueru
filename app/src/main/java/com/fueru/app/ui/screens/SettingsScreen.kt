@@ -29,6 +29,7 @@ private val categories = listOf(
     SettingsCategory("Calendar", "Imported calendar data", FueruRoutes.SETTINGS_CALENDAR),
     SettingsCategory("Practices", "Bottom-nav tabs, vacation, session length", FueruRoutes.SETTINGS_PRACTICES),
     SettingsCategory("Stakes & Charities", "Stage 3/4 pledge consequences", FueruRoutes.SETTINGS_STAKES),
+    SettingsCategory("About & Updates", "Version, check for updates", FueruRoutes.SETTINGS_ABOUT),
     SettingsCategory("Danger Zone", "Wipe all data", FueruRoutes.SETTINGS_DANGER, danger = true),
 )
 

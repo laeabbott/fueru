@@ -1,5 +1,6 @@
 package com.fueru.app.ui.screens
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -22,11 +24,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.fueru.app.BuildConfig
 import com.fueru.app.FueruApplication
 import com.fueru.app.data.AppLogger
+import com.fueru.app.data.AppUpdateChecker
+import com.fueru.app.data.AppUpdatePermissions
 import com.fueru.app.data.GuidedSessionDefaultStore
 import com.fueru.app.data.IcsCalendarStore
 import com.fueru.app.data.IgnoredEventStore
+import com.fueru.app.data.UpdateInfo
 import com.fueru.app.data.WeightUnit
 import com.fueru.app.data.WeightUnitStore
 import com.fueru.app.data.WorkoutSessionStore
@@ -508,6 +518,141 @@ fun SettingsDangerScreen(onBack: () -> Unit, onDataWiped: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     FueruButton(text = "Cancel", variant = FueruButtonVariant.Ghost, onClick = { showWipeConfirm = false }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
+}
+
+// ---- About & Updates ------------------------------------------------------------------------
+
+/**
+ * In-app-update round — self-serve "check for updates" against the (now-public) repo's GitHub
+ * Releases, replacing the old "I build it, send you a file, you install it" chat-transfer flow.
+ * No Play Store, so at least one Android system "install this?" confirmation is unavoidable — this
+ * gets it down to: Check for updates -> Download & Install -> (first time only) grant a permission
+ * -> Android's own install prompt.
+ */
+private sealed class UpdateUiState {
+    data object Idle : UpdateUiState()
+    data object Checking : UpdateUiState()
+    data object UpToDate : UpdateUiState()
+    data object CheckFailed : UpdateUiState()
+    data class Available(val info: UpdateInfo) : UpdateUiState()
+    data class Downloading(val info: UpdateInfo, val progress: Float?) : UpdateUiState()
+    data object DownloadFailed : UpdateUiState()
+}
+
+@Composable
+fun SettingsAboutScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+
+    // Unlike SettingsNotificationsScreen's exact-alarm permission (a known, accepted gap — see its
+    // own comment), this one *is* re-checked on resume: coming straight back from the system "allow
+    // installs" screen and still seeing "grant permission" would directly undercut the whole point
+    // of this round (a smooth, no-friction self-update path).
+    var hasInstallPermission by remember { mutableStateOf(AppUpdatePermissions.canRequestPackageInstalls(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasInstallPermission = AppUpdatePermissions.canRequestPackageInstalls(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    fun startDownload(info: UpdateInfo) {
+        state = UpdateUiState.Downloading(info, null)
+        scope.launch {
+            val file = AppUpdateChecker.downloadApk(context, info.downloadUrl) { progress ->
+                state = UpdateUiState.Downloading(info, progress)
+            }
+            if (file == null) {
+                state = UpdateUiState.DownloadFailed
+                return@launch
+            }
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+            // Back to Available (not a "done" state) -- Android's own install screen is what's in
+            // front of the user now; if they back out of it without confirming, the button here is
+            // still there to try again rather than looking stuck.
+            state = UpdateUiState.Available(info)
+        }
+    }
+
+    SettingsSubScaffold(title = "about & updates", onBack = onBack) {
+        FueruCard(modifier = Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                Text(text = "fueru", color = FueruColors.TextPrimary, style = FueruType.bodyLg)
+                Text(text = "Version ${BuildConfig.VERSION_NAME}", color = FueruColors.TextMuted, style = FueruType.caption)
+
+                when (val s = state) {
+                    is UpdateUiState.Idle -> FueruButton(
+                        text = "Check for updates",
+                        onClick = {
+                            state = UpdateUiState.Checking
+                            scope.launch {
+                                state = try {
+                                    AppUpdateChecker.checkForUpdate()?.let { UpdateUiState.Available(it) } ?: UpdateUiState.UpToDate
+                                } catch (e: Exception) {
+                                    UpdateUiState.CheckFailed
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    is UpdateUiState.Checking -> Text(text = "checking...", color = FueruColors.TextMuted, style = FueruType.caption)
+                    is UpdateUiState.UpToDate -> Text(text = "you're up to date.", color = FueruColors.TextMuted, style = FueruType.caption)
+                    is UpdateUiState.CheckFailed -> Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                        Text(text = "couldn't check for updates — check your connection.", color = FueruColors.SignalDanger, style = FueruType.caption)
+                        FueruButton(
+                            text = "Try again",
+                            variant = FueruButtonVariant.Secondary,
+                            onClick = { state = UpdateUiState.Idle },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    is UpdateUiState.Available -> Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                        Text(text = "${s.info.versionName} is available.", color = FueruColors.Fire4, style = FueruType.caption)
+                        if (hasInstallPermission) {
+                            FueruButton(text = "Download & Install", onClick = { startDownload(s.info) }, modifier = Modifier.fillMaxWidth())
+                        } else {
+                            Text(
+                                text = "Needs one-time permission to install updates from outside the Play Store.",
+                                color = FueruColors.TextMuted,
+                                style = FueruType.caption,
+                            )
+                            FueruButton(
+                                text = "Grant install permission",
+                                variant = FueruButtonVariant.Secondary,
+                                onClick = { AppUpdatePermissions.requestInstallPermission(context) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    is UpdateUiState.Downloading -> Text(
+                        text = s.progress?.let { "downloading... ${(it * 100).toInt()}%" } ?: "downloading...",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                    )
+                    is UpdateUiState.DownloadFailed -> Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                        Text(text = "download failed — check your connection and try again.", color = FueruColors.SignalDanger, style = FueruType.caption)
+                        FueruButton(
+                            text = "Try again",
+                            variant = FueruButtonVariant.Secondary,
+                            onClick = { state = UpdateUiState.Idle },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }

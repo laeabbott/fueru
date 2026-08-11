@@ -31,8 +31,11 @@ android {
         applicationId = "com.fueru.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // In-app-update round -- overridable via -PappVersionCode/-PappVersionName so CI can stamp
+        // an always-increasing versionCode (github.run_number) on every published release without
+        // ever needing a manual bump here. Local/PR builds fall back to these checked-in defaults.
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("appVersionName") as String?) ?: "0.1.0"
 
         // USDA FoodData Central — see data/food/UsdaFoodApi.kt. Empty string (not a crash) if unset.
         buildConfigField("String", "USDA_API_KEY", "\"${localProperties.getProperty("USDA_API_KEY", "")}\"")
@@ -40,7 +43,28 @@ android {
         buildConfigField("String", "GIPHY_API_KEY", "\"${localProperties.getProperty("GIPHY_API_KEY", "")}\"")
     }
 
+    // In-app-update round -- explicit, checked-in debug keystore (app/debug.keystore, a copy of
+    // the one this dev machine has always used) instead of AGP's implicit per-machine default.
+    // Without this, a CI runner would auto-generate its *own* debug keystore and every future
+    // "self-update" build would carry a different signing certificate than what's already on the
+    // phone -- Android refuses to install a signature mismatch as an upgrade, forcing an uninstall
+    // (data loss) first. The store/key passwords below are the universally-known AGP defaults
+    // ("android"/"androiddebugkey"), not a real secret -- safe to commit, and specifically why
+    // Google's own tooling ships this exact convention for keeping CI and local debug signing
+    // consistent.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

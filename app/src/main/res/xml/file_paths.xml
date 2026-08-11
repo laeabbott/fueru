@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- In-app logging round — exposes only AppLogger's own "logs" subdirectory of filesDir, nothing else in app-private storage. -->
+<!-- In-app logging round — exposes only AppLogger's own "logs" subdirectory of filesDir, nothing else in app-private storage.
+     In-app-update round — exposes cacheDir, where AppUpdateChecker.downloadApk() saves the downloaded APK, so it can be handed to the system installer as a content:// URI. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="logs" path="logs/" />
+    <cache-path name="updates" path="." />
 </paths>

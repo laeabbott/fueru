@@ -23,6 +23,8 @@ object FueruRoutes {
     const val SETTINGS_PRACTICES = "settings_practices"
     const val SETTINGS_STAKES = "settings_stakes"
     const val SETTINGS_DANGER = "settings_danger"
+    /** In-app-update round — current version + check-for-updates/self-install. */
+    const val SETTINGS_ABOUT = "settings_about"
     /** Core Engine's practice list — not a bottom-nav tab yet, reached via a link from Home. */
     const val PRACTICES = "practices"
     /** fuwari round — Home's one-tap "begin session" quick-start timer, bypassing Resistance Flow entirely. */
