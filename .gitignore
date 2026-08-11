@@ -17,3 +17,10 @@ app/build/
 
 # Transient per-session lock file (pid/session id), not project state.
 .claude/scheduled_tasks.lock
+
+# Round-by-round dev journal -- carries a lot of specific personal context (the user's own
+# patterns, why certain product calls were made) that has no reason to be in a public repo's
+# history. Local-only, same "lives here, not synced" treatment as local.properties. Scrubbed
+# from all prior git history via git-filter-repo when the repo went public -- never re-add this
+# to tracking.
+HANDOFF.md
