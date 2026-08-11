@@ -42,8 +42,10 @@ fun OnboardingFlow(onDone: () -> Unit) {
 
     fun goNext() {
         if (currentStep == OnboardingStep.PROGRAM_START) {
-            WeightUnitStore.save(application, state.weightUnit)
-            scope.launch { persistOnboarding(application.database, state) }
+            scope.launch {
+                WeightUnitStore.save(application, state.weightUnit)
+                persistOnboarding(application.database, state)
+            }
         }
         if (stepIndex < steps.lastIndex) stepIndex++ else onDone()
     }

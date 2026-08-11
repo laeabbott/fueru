@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -21,10 +22,12 @@ import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.theme.FueruColors
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Spacing
+import kotlinx.coroutines.launch
 
 @Composable
 fun CalendarPermissionStep(state: OnboardingState, onNext: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         state.calendarPermissionRequested = true
         onNext()
@@ -35,9 +38,11 @@ fun CalendarPermissionStep(state: OnboardingState, onNext: () -> Unit) {
     // already uses, just reachable here too instead of only after onboarding.
     val icsPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            IcsCalendarStore.save(context, uri)
-            state.calendarPermissionRequested = true
-            onNext()
+            scope.launch {
+                IcsCalendarStore.save(context, uri)
+                state.calendarPermissionRequested = true
+                onNext()
+            }
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.space4)) {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,7 +76,8 @@ fun SettingsProfileScreen(onBack: () -> Unit) {
     val userProfile by database.userProfileDao().observe().collectAsState(initial = null)
     val profile = userProfile ?: return
 
-    var unit by remember { mutableStateOf(WeightUnitStore.get(application)) }
+    var unit by remember { mutableStateOf(WeightUnit.LB) }
+    LaunchedEffect(Unit) { unit = WeightUnitStore.get(application) }
     var displayName by remember(profile.displayName) { mutableStateOf(profile.displayName) }
 
     SettingsSubScaffold(title = "profile & units", onBack = onBack) {
@@ -89,7 +91,7 @@ fun SettingsProfileScreen(onBack: () -> Unit) {
                             variant = if (unit == option) FueruButtonVariant.Secondary else FueruButtonVariant.Ghost,
                             onClick = {
                                 unit = option
-                                WeightUnitStore.save(application, option)
+                                scope.launch { WeightUnitStore.save(application, option) }
                             },
                         )
                     }
@@ -226,6 +228,7 @@ fun SettingsFoodScreen(onBack: () -> Unit) {
 @Composable
 fun SettingsCalendarScreen(onBack: () -> Unit) {
     val application = LocalContext.current.applicationContext as FueruApplication
+    val scope = rememberCoroutineScope()
     var showPurgeConfirm by remember { mutableStateOf(false) }
 
     SettingsSubScaffold(title = "calendar", onBack = onBack) {
@@ -267,8 +270,10 @@ fun SettingsCalendarScreen(onBack: () -> Unit) {
                         text = "Purge calendar data",
                         variant = FueruButtonVariant.Danger,
                         onClick = {
-                            IcsCalendarStore.clear(application)
-                            IgnoredEventStore.clear(application)
+                            scope.launch {
+                                IcsCalendarStore.clear(application)
+                                IgnoredEventStore.clear(application)
+                            }
                             showPurgeConfirm = false
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -290,7 +295,8 @@ fun SettingsPracticesScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val practices by database.practiceDao().observeAll().collectAsState(initial = emptyList())
     var vacationTarget by remember { mutableStateOf<Practice?>(null) }
-    var defaultMinutes by remember { mutableStateOf(GuidedSessionDefaultStore.getMinutes(application)) }
+    var defaultMinutes by remember { mutableStateOf(45) }
+    LaunchedEffect(Unit) { defaultMinutes = GuidedSessionDefaultStore.getMinutes(application) }
 
     SettingsSubScaffold(title = "practices", onBack = onBack) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
@@ -309,7 +315,7 @@ fun SettingsPracticesScreen(onBack: () -> Unit) {
                             enabled = defaultMinutes > 5,
                             onClick = {
                                 defaultMinutes = (defaultMinutes - 5).coerceAtLeast(5)
-                                GuidedSessionDefaultStore.saveMinutes(application, defaultMinutes)
+                                scope.launch { GuidedSessionDefaultStore.saveMinutes(application, defaultMinutes) }
                             },
                         )
                         Text(
@@ -323,7 +329,7 @@ fun SettingsPracticesScreen(onBack: () -> Unit) {
                             variant = FueruButtonVariant.Secondary,
                             onClick = {
                                 defaultMinutes += 5
-                                GuidedSessionDefaultStore.saveMinutes(application, defaultMinutes)
+                                scope.launch { GuidedSessionDefaultStore.saveMinutes(application, defaultMinutes) }
                             },
                         )
                     }

@@ -71,13 +71,14 @@ private val progressGreetings = listOf(
 fun ProgressScreen() {
     val application = LocalContext.current.applicationContext as FueruApplication
     val database = application.database
-    val unit = remember { WeightUnitStore.get(application) }
+    var unit by remember { mutableStateOf(WeightUnit.LB) }
 
     val userProfile by database.userProfileDao().observe().collectAsState(initial = null)
     if (userProfile == null) return
 
     var overview by remember { mutableStateOf<ProgressOverview?>(null) }
     LaunchedEffect(Unit) {
+        unit = WeightUnitStore.get(application)
         overview = loadProgressOverview(database)
     }
     val practices by database.practiceDao().observeAll().collectAsState(initial = emptyList())

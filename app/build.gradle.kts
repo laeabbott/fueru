@@ -113,6 +113,14 @@ dependencies {
 
     implementation(libs.androidx.work.runtime.ktx)
 
+    // Preferences DataStore replaces the 8 ad-hoc SharedPreferences-backed "Store" singletons --
+    // see HANDOFF.md's architecture-review round. kotlinx-coroutines-core/android were previously
+    // only present transitively (pulled in by room-ktx/work-runtime-ktx); declared explicitly now
+    // rather than relying on an unpinned transitive resolution, since DataStore itself also needs it.
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.android)
+
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
     // Coil3 splits network image fetching out of coil-compose — without this, any https:// model

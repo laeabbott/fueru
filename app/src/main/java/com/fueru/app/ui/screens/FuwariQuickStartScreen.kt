@@ -60,9 +60,10 @@ fun FuwariQuickStartScreen(onDone: () -> Unit) {
     val database = application.database
     val scope = rememberCoroutineScope()
 
-    val durationMinutes = remember { GuidedSessionDefaultStore.getMinutes(application) }
+    var durationMinutes by remember { mutableIntStateOf(45) }
     var practiceId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(Unit) {
+        durationMinutes = GuidedSessionDefaultStore.getMinutes(application)
         practiceId = database.practiceDao().getByName(FUWARI_PRACTICE_NAME)?.id
     }
 

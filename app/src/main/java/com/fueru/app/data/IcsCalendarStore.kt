@@ -3,35 +3,36 @@ package com.fueru.app.data
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
-private const val PREFS_NAME = "fueru_ics"
-private const val KEY_URI = "ics_uri"
+private val Context.icsDataStore by preferencesDataStore(name = "fueru_ics")
+private val KEY_URI = stringPreferencesKey("ics_uri")
 
 /**
  * Persists the user's picked .ics file (Proton Calendar export, etc. — see project memory on why
  * CalendarContract alone isn't enough) as a content URI with a long-lived read grant, so This
  * Week's busy-block check can re-read it on any future day without asking the user to re-pick the
- * file. Plain SharedPreferences, not a Room table — this is one optional string, not worth a
- * schema version bump (which would also destructively wipe local dev data under the current
- * fallbackToDestructiveMigration setup).
+ * file. Preferences DataStore, not a Room table — this is one optional string, not worth a schema
+ * version bump.
  */
 object IcsCalendarStore {
 
-    fun save(context: Context, uri: Uri) {
+    suspend fun save(context: Context, uri: Uri) {
         context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        prefs(context).edit().putString(KEY_URI, uri.toString()).apply()
+        context.icsDataStore.edit { it[KEY_URI] = uri.toString() }
     }
 
-    fun clear(context: Context) {
-        prefs(context).edit().remove(KEY_URI).apply()
+    suspend fun clear(context: Context) {
+        context.icsDataStore.edit { it.remove(KEY_URI) }
     }
 
-    fun savedUri(context: Context): Uri? =
-        prefs(context).getString(KEY_URI, null)?.let { Uri.parse(it) }
-
-    private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    suspend fun savedUri(context: Context): Uri? =
+        context.icsDataStore.data.first()[KEY_URI]?.let { Uri.parse(it) }
 
     /**
      * Busy blocks from the imported .ics file (if any) overlapping the 24h window starting at

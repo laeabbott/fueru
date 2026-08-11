@@ -56,10 +56,11 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
     val weekStart = remember { DateUtils.startOfWeek(DateUtils.todayEpochMillis()) }
     var autoFillTrigger by remember { mutableIntStateOf(0) }
 
-    var icsImported by remember { mutableStateOf(IcsCalendarStore.savedUri(application) != null) }
+    var icsImported by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { icsImported = IcsCalendarStore.savedUri(application) != null }
     val icsPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            IcsCalendarStore.save(application, uri)
+            scope.launch { IcsCalendarStore.save(application, uri) }
             icsImported = true
         }
     }
@@ -143,7 +144,7 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
                     color = FueruColors.Fire4,
                     style = FueruType.caption,
                     modifier = Modifier.clickable {
-                        IcsCalendarStore.clear(application)
+                        scope.launch { IcsCalendarStore.clear(application) }
                         icsImported = false
                     },
                 )
@@ -210,7 +211,7 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
                     },
                     pendingDayLabel = unscheduledDays.firstOrNull()?.dayLabel,
                     onIgnoreEvent = { block ->
-                        IgnoredEventStore.ignore(application, block.id)
+                        scope.launch { IgnoredEventStore.ignore(application, block.id) }
                         busyRefreshTrigger++
                     },
                     onUnschedule = ::unschedule,

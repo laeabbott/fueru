@@ -219,7 +219,6 @@ private fun WorkoutEmptyState(onOpenThisWeek: () -> Unit) {
 @Composable
 private fun WorkoutDoneForToday(database: AppDatabase, scheduledWorkout: ScheduledWorkout) {
     val context = LocalContext.current
-    val unit = remember { WeightUnitStore.get(context) }
 
     var loaded by remember(scheduledWorkout.id) { mutableStateOf(false) }
     var celebration by remember(scheduledWorkout.id) { mutableStateOf<WorkoutCelebration?>(null) }
@@ -229,6 +228,7 @@ private fun WorkoutDoneForToday(database: AppDatabase, scheduledWorkout: Schedul
     var nextWorkoutPreview by remember(scheduledWorkout.id) { mutableStateOf<NextWorkoutPreview?>(null) }
 
     LaunchedEffect(scheduledWorkout.id) {
+        val unit = WeightUnitStore.get(context)
         celebration = WorkoutCelebrationStore.get(context, scheduledWorkout.id)
         val plan = loadWorkoutSessionPlan(database, scheduledWorkout)
         val setLogs = database.setLogDao().getForScheduledWorkout(scheduledWorkout.id)
@@ -313,21 +313,33 @@ private fun ActiveWorkoutSession(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val unit = remember { WeightUnitStore.get(context) }
+    // Both start from a plain default and get corrected moments later by the LaunchedEffect below
+    // (WeightUnitStore/WorkoutSessionStore reads are suspend now that they're DataStore-backed) --
+    // same "default then async-correct" pattern used throughout this DataStore migration. The
+    // resumed slot/set position briefly showing 0/1 before snapping to the real value is the one
+    // user-visible tradeoff, and it resolves within the same DataStore-read's worth of time (a
+    // local file read, effectively instant) as every other converted call site in this round.
+    var unit by remember { mutableStateOf(WeightUnit.LB) }
     var showExitConfirm by remember { mutableStateOf(false) }
 
-    val resumed = remember(plan.scheduledWorkout.id) { WorkoutSessionStore.resumeFor(context, plan.scheduledWorkout.id) }
-    val initialSlotIndex = (resumed?.slotIndex ?: 0).coerceIn(0, plan.slots.size - 1)
-    val initialSetNumber = (resumed?.setNumber ?: 1).coerceIn(1, plan.slots[initialSlotIndex].prescribedSet.sets)
-
     var slots by remember(plan.scheduledWorkout.id) { mutableStateOf(plan.slots) }
-    var slotIndex by remember(plan.scheduledWorkout.id) { mutableIntStateOf(initialSlotIndex) }
-    var setNumber by remember(plan.scheduledWorkout.id) { mutableIntStateOf(initialSetNumber) }
+    var slotIndex by remember(plan.scheduledWorkout.id) { mutableIntStateOf(0) }
+    var setNumber by remember(plan.scheduledWorkout.id) { mutableIntStateOf(1) }
     var totalLogged by remember(plan.scheduledWorkout.id) { mutableIntStateOf(0) }
     var finished by remember(plan.scheduledWorkout.id) { mutableStateOf(false) }
     var celebrationGifUrl by remember(plan.scheduledWorkout.id) { mutableStateOf<String?>(null) }
     var nextWorkoutPreview by remember(plan.scheduledWorkout.id) { mutableStateOf<NextWorkoutPreview?>(null) }
     var sessionSetLogs by remember(plan.scheduledWorkout.id) { mutableStateOf<List<SetLog>>(emptyList()) }
+
+    LaunchedEffect(plan.scheduledWorkout.id) {
+        unit = WeightUnitStore.get(context)
+        val resumed = WorkoutSessionStore.resumeFor(context, plan.scheduledWorkout.id)
+        if (resumed != null) {
+            val resumedSlotIndex = resumed.slotIndex.coerceIn(0, plan.slots.size - 1)
+            slotIndex = resumedSlotIndex
+            setNumber = resumed.setNumber.coerceIn(1, plan.slots[resumedSlotIndex].prescribedSet.sets)
+        }
+    }
 
     // Prefetched the moment the session starts, not at completion — a real workout takes minutes,
     // so by the time the last set is logged the network round-trip to Giphy is long done, and the
@@ -478,10 +490,12 @@ private fun ActiveWorkoutSession(
             }
             finished = true
         }
-        if (finished) {
-            WorkoutSessionStore.clear(context)
-        } else {
-            WorkoutSessionStore.save(context, WorkoutSessionProgress(plan.scheduledWorkout.id, slotIndex, setNumber))
+        scope.launch {
+            if (finished) {
+                WorkoutSessionStore.clear(context)
+            } else {
+                WorkoutSessionStore.save(context, WorkoutSessionProgress(plan.scheduledWorkout.id, slotIndex, setNumber))
+            }
         }
     }
 

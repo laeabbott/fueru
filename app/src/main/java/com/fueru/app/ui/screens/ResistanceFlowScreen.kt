@@ -120,29 +120,33 @@ fun ResistanceFlowScreen(
     var step by remember {
         mutableStateOf(if (startAtIgnite) FlowStep.IGNITE else FlowStep.NAME_IT)
     }
-    var session by remember(practiceId) {
-        mutableStateOf(
-            SessionData(
-                // For a guided-session practice, microAction/timerSeconds are semantically repurposed
-                // as "session type" and "session duration" — same fields, same ResistanceFlowPrefs
-                // persistence, same §6.3 fade-unlock interaction, different UI to set them (see
-                // GuidedSessionCommitStep). No fallback micro-action text for guided practices — the
-                // type picker starts blank until the user actually picks one.
-                microAction = if (current.guidedSessionEnabled) {
-                    ResistanceFlowPrefs.getMicroAction(context, practiceId, null)
-                } else {
-                    ResistanceFlowPrefs.getMicroAction(context, practiceId, current.microActionDefault)
-                },
-                timerSeconds = ResistanceFlowPrefs.getTimerSeconds(
-                    context,
-                    practiceId,
-                    // fuwari round — one shared "default guided-session length" setting (Settings'
-                    // Practices category), not a hardcoded 20 minutes, so it's the same concept
-                    // whether reached from here or the Home quick-start button.
-                    default = if (current.guidedSessionEnabled) GuidedSessionDefaultStore.getMinutes(context) * 60 else 120,
-                ),
-            ),
+    // Starts with plain defaults (SessionData's own) since reading the DataStore-backed remembered
+    // microAction/timerSeconds is now suspend — the LaunchedEffect below corrects them moments
+    // later, same "default then async-correct" pattern used elsewhere this round (ProgressScreen,
+    // FuwariQuickStartScreen). The flow's earliest steps (Name It/Defuse/Body Check) don't read
+    // these fields at all, so a session actually reaching Commit before the correction lands is not
+    // a realistic race.
+    var session by remember(practiceId) { mutableStateOf(SessionData()) }
+    LaunchedEffect(practiceId) {
+        // For a guided-session practice, microAction/timerSeconds are semantically repurposed
+        // as "session type" and "session duration" — same fields, same ResistanceFlowPrefs
+        // persistence, same §6.3 fade-unlock interaction, different UI to set them (see
+        // GuidedSessionCommitStep). No fallback micro-action text for guided practices — the
+        // type picker starts blank until the user actually picks one.
+        val microAction = if (current.guidedSessionEnabled) {
+            ResistanceFlowPrefs.getMicroAction(context, practiceId, null)
+        } else {
+            ResistanceFlowPrefs.getMicroAction(context, practiceId, current.microActionDefault)
+        }
+        val timerSeconds = ResistanceFlowPrefs.getTimerSeconds(
+            context,
+            practiceId,
+            // fuwari round — one shared "default guided-session length" setting (Settings'
+            // Practices category), not a hardcoded 20 minutes, so it's the same concept
+            // whether reached from here or the Home quick-start button.
+            default = if (current.guidedSessionEnabled) GuidedSessionDefaultStore.getMinutes(context) * 60 else 120,
         )
+        session = session.copy(microAction = microAction, timerSeconds = timerSeconds)
     }
     // Immersive mode round — the meditation/guided-session timer (ACTION) already has no bottom
     // nav to hide (this whole route sits outside tabRoutes), but nothing stopped a stray back
@@ -221,7 +225,7 @@ fun ResistanceFlowScreen(
                     onTypeChange = { session = session.copy(microAction = it) },
                     onDurationChange = { session = session.copy(timerSeconds = it) },
                     onNext = {
-                        ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds)
+                        scope.launch { ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds) }
                         step = FlowStep.IGNITE
                     },
                 )
@@ -232,7 +236,7 @@ fun ResistanceFlowScreen(
                     onMicroActionChange = { session = session.copy(microAction = it) },
                     onTimerChange = { session = session.copy(timerSeconds = it) },
                     onNext = {
-                        ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds)
+                        scope.launch { ResistanceFlowPrefs.save(context, practiceId, session.microAction, session.timerSeconds) }
                         step = FlowStep.IGNITE
                     },
                 )

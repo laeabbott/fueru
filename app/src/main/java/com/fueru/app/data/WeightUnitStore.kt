@@ -1,15 +1,17 @@
 package com.fueru.app.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.first
 
-private const val PREFS_NAME = "fueru_weight_unit"
-private const val KEY_UNIT = "unit"
+private val Context.weightUnitDataStore by preferencesDataStore(name = "fueru_weight_unit")
+private val KEY_UNIT = stringPreferencesKey("unit")
 
 /**
- * Persists the kg/lb display preference. Plain SharedPreferences, not a UserProfile column — this
- * is a UI/input setting, not workout data, so it doesn't need a Room schema bump (which, under this
- * project's current fallbackToDestructiveMigration setup, would wipe local dev data — same
- * reasoning as IcsCalendarStore and WorkoutSessionStore).
+ * Persists the kg/lb display preference. Preferences DataStore, not a UserProfile column — this
+ * is a UI/input setting, not workout data, so it doesn't need a Room schema bump.
  *
  * Defaults to LB: most English-speaking users think in pounds, and — per the user directly — even
  * gyms outside English-speaking countries (their example: Japan) commonly have lb-denominated
@@ -17,18 +19,16 @@ private const val KEY_UNIT = "unit"
  */
 object WeightUnitStore {
 
-    fun get(context: Context): WeightUnit {
-        val stored = prefs(context).getString(KEY_UNIT, null)
+    suspend fun get(context: Context): WeightUnit {
+        val stored = context.weightUnitDataStore.data.first()[KEY_UNIT]
         return WeightUnit.entries.find { it.name == stored } ?: WeightUnit.LB
     }
 
-    fun save(context: Context, unit: WeightUnit) {
-        prefs(context).edit().putString(KEY_UNIT, unit.name).apply()
+    suspend fun save(context: Context, unit: WeightUnit) {
+        context.weightUnitDataStore.edit { it[KEY_UNIT] = unit.name }
     }
 
-    fun clear(context: Context) {
-        prefs(context).edit().remove(KEY_UNIT).apply()
+    suspend fun clear(context: Context) {
+        context.weightUnitDataStore.edit { it.remove(KEY_UNIT) }
     }
-
-    private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }
