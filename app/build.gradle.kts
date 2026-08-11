@@ -62,6 +62,15 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // CI round -- baseline grandfathers in the pre-existing 1 error/22 warnings/5 hints found the
+    // first time `./gradlew lint` ran for real (in GitHub Actions, never run in this project
+    // before). The point of lint-in-CI here is catching *new* issues going forward, not fixing a
+    // backlog of unrelated debt in one unrelated commit -- re-run `./gradlew updateLintBaseline`
+    // to refresh this file after deliberately fixing (or accepting more of) the baselined issues.
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 kotlin {

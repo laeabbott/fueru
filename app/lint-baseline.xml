@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.13.2" type="baseline" client="gradle" dependencies="false" name="AGP (8.13.2)" variant="all" version="8.13.2">
+
+    <issue
+        id="NonObservableLocale"
+        message="Reading locale in a non-observable way in a composable function"
+        errorLine1="                        text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()),"
+        errorLine2="                                                                              ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/components/WeekScheduleGrid.kt"
+            line="126"
+            column="79"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.application than 8.13.2 is available: 9.3.1"
+        errorLine1="agp = &quot;8.13.2&quot;"
+        errorLine2="      ~~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="2"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.17.0 is available: 1.19.0"
+        errorLine1="coreKtx = &quot;1.17.0&quot;"
+        errorLine2="          ~~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="5"
+            column="11"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.9.4 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.9.4&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="6"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-viewmodel-compose than 2.9.4 is available: 2.11.0"
+        errorLine1="lifecycle = &quot;2.9.4&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="6"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.activity:activity-compose than 1.12.4 is available: 1.13.0"
+        errorLine1="activityCompose = &quot;1.12.4&quot;"
+        errorLine2="                  ~~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="7"
+            column="19"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.android than 2.3.10 is available: 2.4.10"
+        errorLine1="kotlin = &quot;2.3.10&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="3"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.plugin.compose than 2.3.10 is available: 2.4.10"
+        errorLine1="kotlin = &quot;2.3.10&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="$HOME/Documents/06. Programming/01. Personal Repos/git/fueru/gradle/libs.versions.toml"
+            line="3"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="UnsafeProtectedBroadcastReceiver"
+        message="This broadcast receiver declares an intent-filter for a protected broadcast action string, which can only be sent by the system, not third-party applications. However, the receiver&apos;s `onReceive` method does not appear to call `getAction` to ensure that the received Intent&apos;s action string matches the expected value, potentially making it possible for another actor to send a spoofed intent with no action string or a different action string and cause undesired behavior."
+        errorLine1="    override fun onReceive(context: Context, intent: Intent) {"
+        errorLine2="                 ~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/escalation/BootCompletedReceiver.kt"
+            line="20"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is always >= 26"
+        errorLine1="            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/escalation/EscalationLockService.kt"
+            line="70"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is always >= 26"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/notifications/NotificationHelper.kt"
+            line="37"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is always >= 26"
+        errorLine1="        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/notifications/NotificationHelper.kt"
+            line="49"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="This folder configuration (`v26`) is unnecessary; `minSdkVersion` is 26. Merge all the resources in this folder into `mipmap-anydpi`.">
+        <location
+            file="src/main/res/mipmap-anydpi-v26"/>
+    </issue>
+
+    <issue
+        id="StaticFieldLeak"
+        message="This field leaks a context object"
+        errorLine1="    private val context: Context,"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/screens/WorkoutScreen.kt"
+            line="332"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="AutoboxingStateCreation"
+        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
+        errorLine1="    var heightCm by mutableStateOf(170f)"
+        errorLine2="                    ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/onboarding/OnboardingState.kt"
+            line="13"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="AutoboxingStateCreation"
+        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
+        errorLine1="    var age by mutableStateOf(25)"
+        errorLine2="               ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/onboarding/OnboardingState.kt"
+            line="14"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="AutoboxingStateCreation"
+        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
+        errorLine1="    var strengthLevel by mutableStateOf(3)"
+        errorLine2="                         ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/onboarding/OnboardingState.kt"
+            line="23"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="AutoboxingStateCreation"
+        message="Prefer `mutableLongStateOf` instead of `mutableStateOf`"
+        errorLine1="    var programStartDate by mutableStateOf(DateUtils.todayEpochMillis())"
+        errorLine2="                            ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/onboarding/OnboardingState.kt"
+            line="48"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="AutoboxingStateCreation"
+        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
+        errorLine1="    var defaultMinutes by remember { mutableStateOf(45) }"
+        errorLine2="                                     ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/screens/SettingsCategoryScreens.kt"
+            line="298"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_trophy_fill` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="src/main/res/drawable/ic_trophy_fill.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UseOfNonLambdaOffsetOverload"
+        message="State backed values should use the lambda overload of Modifier.offset"
+        errorLine1="                    .offset(x = thumbOffset, y = 3.dp)"
+        errorLine2="                     ~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/components/Switch.kt"
+            line="61"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        message="The application adaptive icon is missing a monochrome tag"
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+            line="3"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        message="The application adaptive roundIcon is missing a monochrome tag"
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"
+            line="3"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(current.charityUrl))) },"
+        errorLine2="                                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/ui/screens/ConsequencePledgeScreen.kt"
+            line="64"
+            column="82"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="            data = Uri.parse(&quot;package:${context.packageName}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/escalation/EscalationPermissions.kt"
+            line="27"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="            data = Uri.parse(&quot;package:${context.packageName}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/escalation/EscalationPermissions.kt"
+            line="27"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        context.icsDataStore.data.first()[KEY_URI]?.let { Uri.parse(it) }"
+        errorLine2="                                                          ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/fueru/app/data/IcsCalendarStore.kt"
+            line="35"
+            column="59"/>
+    </issue>
+
+</issues>
