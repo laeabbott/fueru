@@ -1,5 +1,6 @@
 package com.fueru.app.ui.screens
 
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -43,6 +44,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import coil3.compose.AsyncImage
 import com.fueru.app.FueruApplication
 import com.fueru.app.R
@@ -87,6 +93,10 @@ import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Radius
 import com.fueru.app.ui.theme.Spacing
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -303,6 +313,238 @@ private fun formatRepRange(min: Int, max: Int): String = if (min == max) "$max r
 /** Inactivity-check round — how long with zero touch activity before "still there?" fires. */
 private const val INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000L
 
+/**
+ * First ViewModel in this codebase (see HANDOFF.md's architecture-review round) — deliberately
+ * scoped to just this one screen's most state-heavy composable, not a blanket rewrite. Owns every
+ * piece of state that's actually session logic (current slot/set, logged-set count, the live
+ * progression suggestion, weight/reps/rpe inputs, the completion celebration) so it survives
+ * recomposition the same way it always did, but is now unit-testable in principle and no longer
+ * scattered across ~20 separate `remember` calls with overlapping keys. Dialog-visibility state
+ * (exit confirm, instructions toggle, substitute picker, shortfall dialog) deliberately stays in
+ * the Composable below — it's pure UI, never persisted or read by anything else.
+ *
+ * Constructed via `viewModel(key = plan.scheduledWorkout.id.toString(), factory = ...)` in
+ * [ActiveWorkoutSession] — Compose clears it automatically once that composable leaves composition
+ * (session finishes, or the key changes), same lifecycle guarantee a `remember(key)` block had.
+ */
+private class WorkoutViewModel(
+    private val database: AppDatabase,
+    private val context: Context,
+    private val profile: UserProfile,
+    initialPlan: WorkoutSessionPlan,
+) : ViewModel() {
+
+    data class UiState(
+        val slots: List<WorkoutSlot>,
+        val slotIndex: Int = 0,
+        val setNumber: Int = 1,
+        val totalLogged: Int = 0,
+        val finished: Boolean = false,
+        val unit: WeightUnit = WeightUnit.LB,
+        val celebrationGifUrl: String? = null,
+        val nextWorkoutPreview: NextWorkoutPreview? = null,
+        val sessionSetLogs: List<SetLog> = emptyList(),
+        // Computed once per exercise (not per set) and held constant across every set of that
+        // exercise — the suggestion should only move between real sessions (per the progression
+        // doc's week/every-other-week cadence), never mid-session from set to set.
+        val targetReps: Int = 0,
+        val suggestedWeightKg: Float? = null,
+        val suggestionFromHistory: Boolean = false,
+        val justBumpedWeight: Boolean = false,
+        // Values, not strings — a scroll picker always has a definite selection, so there's no
+        // "invalid text" state to track the way old free-text fields needed.
+        val weightValue: Float = 0f,
+        val repsValue: Int = 0,
+        val rpe: Int? = null,
+    )
+
+    val scheduledWorkoutId = initialPlan.scheduledWorkout.id
+    val dayLabel = initialPlan.dayLabel
+    private val scheduledWorkout = initialPlan.scheduledWorkout
+
+    private val _uiState = MutableStateFlow(
+        UiState(
+            slots = initialPlan.slots,
+            targetReps = initialPlan.slots.first().prescribedSet.repsMin,
+            repsValue = initialPlan.slots.first().prescribedSet.repsMin,
+        ),
+    )
+    val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    // Prefetched the moment the session starts, not at completion — a real workout takes minutes,
+    // so by the time the last set is logged the network round-trip to Giphy is long done, and the
+    // completion screen shows a gif instantly instead of visibly waiting on it. Two separate
+    // launches so the regular and milestone fetches run concurrently, not one after another.
+    // Internal only — never rendered, so no reason for these to live in UiState.
+    private var prefetchedRegularGif: String? = null
+    private var prefetchedMilestoneGif: String? = null
+
+    // Inactivity-check round — "if the user does nothing for 5 minutes, check they're still
+    // engaged." recordInteraction() is called by a passive touch watcher on the Composable's root
+    // Column (every pointer event, not consumed). Plain fields, not StateFlow — nothing ever
+    // renders these, only the poll loop below reads them.
+    private var lastInteraction = System.currentTimeMillis()
+    private var lastInactivityNotification: Long? = null
+
+    init {
+        viewModelScope.launch {
+            val unit = WeightUnitStore.get(context)
+            val resumed = WorkoutSessionStore.resumeFor(context, scheduledWorkoutId)
+            if (resumed != null) {
+                val resumedSlotIndex = resumed.slotIndex.coerceIn(0, _uiState.value.slots.size - 1)
+                val resumedSetNumber = resumed.setNumber.coerceIn(1, _uiState.value.slots[resumedSlotIndex].prescribedSet.sets)
+                _uiState.update { it.copy(unit = unit, slotIndex = resumedSlotIndex, setNumber = resumedSetNumber) }
+            } else {
+                _uiState.update { it.copy(unit = unit) }
+            }
+            loadProgressionForCurrentSlot()
+        }
+        viewModelScope.launch { prefetchedRegularGif = GiphyApi.randomCelebrationGifUrl(milestone = false) }
+        viewModelScope.launch { prefetchedMilestoneGif = GiphyApi.randomCelebrationGifUrl(milestone = true) }
+
+        // Polls rather than a single delayed alarm so it naturally re-arms on real activity without
+        // cancel/reschedule bookkeeping; only fires once per idle stretch (won't fire again until
+        // either real activity resets the clock, or another full 5 minutes passes since the last fire).
+        viewModelScope.launch {
+            while (true) {
+                delay(30_000)
+                if (_uiState.value.finished) continue
+                val now = System.currentTimeMillis()
+                val idleFor = now - lastInteraction
+                val sinceLastNotification = lastInactivityNotification?.let { now - it }
+                if (idleFor >= INACTIVITY_THRESHOLD_MS && (sinceLastNotification == null || sinceLastNotification >= INACTIVITY_THRESHOLD_MS)) {
+                    NotificationHelper.notifyWorkoutInactivity(context)
+                    lastInactivityNotification = now
+                }
+            }
+        }
+    }
+
+    fun recordInteraction() {
+        lastInteraction = System.currentTimeMillis()
+    }
+
+    private suspend fun loadProgressionForCurrentSlot() {
+        val state = _uiState.value
+        val slot = state.slots[state.slotIndex]
+        val hasWeight = exerciseHasWeight(slot.exercise.equipment)
+        val result = suggestProgression(database, slot.exercise, slot.prescribedSet, profile, state.unit, scheduledWorkoutId)
+        _uiState.update {
+            it.copy(
+                targetReps = result.targetReps,
+                repsValue = result.targetReps,
+                suggestionFromHistory = result.weightFromHistory,
+                justBumpedWeight = result.justBumpedWeight,
+                suggestedWeightKg = result.suggestedWeightKg,
+                weightValue = if (hasWeight) result.suggestedWeightKg?.let { kg -> convertToDisplay(kg, it.unit) } ?: 0f else 0f,
+                rpe = null,
+            )
+        }
+    }
+
+    suspend fun loadSubstituteOptionsForCurrentSlot(): List<Exercise> {
+        val state = _uiState.value
+        return loadSubstitutes(database, state.slots[state.slotIndex].exercise, profile.equipmentPreference)
+    }
+
+    fun applySubstitution(picked: Exercise) {
+        val state = _uiState.value
+        val prescribedSetId = state.slots[state.slotIndex].prescribedSet.id
+        val updatedSlots = state.slots.toMutableList().also { it[state.slotIndex] = it[state.slotIndex].copy(exercise = picked) }
+        _uiState.update { it.copy(slots = updatedSlots) }
+        viewModelScope.launch { saveExerciseOverride(database, scheduledWorkoutId, prescribedSetId, picked.id) }
+        viewModelScope.launch { loadProgressionForCurrentSlot() }
+    }
+
+    fun onWeightChange(value: Float) {
+        _uiState.update { it.copy(weightValue = value) }
+    }
+
+    fun onRepsChange(value: Int) {
+        _uiState.update { it.copy(repsValue = value) }
+    }
+
+    fun onRpeChange(value: Int) {
+        _uiState.update { it.copy(rpe = if (it.rpe == value) null else value) }
+    }
+
+    fun logSet(reason: String?) {
+        val state = _uiState.value
+        val slot = state.slots[state.slotIndex]
+        val hasWeight = exerciseHasWeight(slot.exercise.equipment)
+        val loggedSetNumber = state.setNumber
+        val loggedWeight = if (hasWeight) convertToKg(state.weightValue, state.unit) else null
+
+        viewModelScope.launch {
+            database.setLogDao().insert(
+                SetLog(
+                    scheduledWorkoutId = scheduledWorkoutId,
+                    exerciseId = slot.exercise.id,
+                    setNumber = loggedSetNumber,
+                    prescribedWeight = state.suggestedWeightKg,
+                    prescribedReps = state.targetReps,
+                    actualWeight = loggedWeight,
+                    actualReps = state.repsValue,
+                    shortfallReason = reason,
+                    rpe = state.rpe,
+                    timestamp = System.currentTimeMillis(),
+                ),
+            )
+        }
+
+        val advancingToNextSet = loggedSetNumber < slot.prescribedSet.sets
+        val advancingToNextExercise = !advancingToNextSet && state.slotIndex < state.slots.size - 1
+
+        when {
+            advancingToNextSet -> {
+                _uiState.update {
+                    it.copy(
+                        totalLogged = it.totalLogged + 1,
+                        setNumber = loggedSetNumber + 1,
+                        weightValue = if (hasWeight) it.suggestedWeightKg?.let { kg -> convertToDisplay(kg, it.unit) } ?: 0f else 0f,
+                        repsValue = it.targetReps,
+                        rpe = null,
+                    )
+                }
+            }
+            advancingToNextExercise -> {
+                _uiState.update { it.copy(totalLogged = it.totalLogged + 1, slotIndex = it.slotIndex + 1, setNumber = 1, rpe = null) }
+                viewModelScope.launch { loadProgressionForCurrentSlot() }
+            }
+            else -> {
+                _uiState.update { it.copy(totalLogged = it.totalLogged + 1, finished = true) }
+                viewModelScope.launch { finishSession() }
+            }
+        }
+
+        viewModelScope.launch {
+            val current = _uiState.value
+            if (current.finished) {
+                WorkoutSessionStore.clear(context)
+            } else {
+                WorkoutSessionStore.save(context, WorkoutSessionProgress(scheduledWorkoutId, current.slotIndex, current.setNumber))
+            }
+        }
+    }
+
+    private suspend fun finishSession() {
+        database.scheduledWorkoutDao().update(scheduledWorkout.copy(status = "completed", completedDate = System.currentTimeMillis()))
+        // No points/streak ledger anymore — "milestone" is just every 5th completed workout ever,
+        // derived on the spot, purely to pick a livelier Giphy tag pool. Nothing reads or displays
+        // this number; it only ever selects which prefetch to use.
+        val isMilestone = database.scheduledWorkoutDao().getAllCompleted().size % 5 == 0
+        // Uses whichever prefetch already landed — only falls back to a fresh (slower) fetch if the
+        // session was too short for the prefetch to finish in time. This is also what gets
+        // persisted, so a later visit shows this exact gif, not a re-roll.
+        val gifUrl = (if (isMilestone) prefetchedMilestoneGif else prefetchedRegularGif)
+            ?: GiphyApi.randomCelebrationGifUrl(isMilestone)
+        WorkoutCelebrationStore.save(context, WorkoutCelebration(scheduledWorkoutId, gifUrl))
+        val nextPreview = loadNextWorkoutPreview(database)
+        val setLogs = database.setLogDao().getForScheduledWorkout(scheduledWorkoutId)
+        _uiState.update { it.copy(celebrationGifUrl = gifUrl, nextWorkoutPreview = nextPreview, sessionSetLogs = setLogs) }
+    }
+}
+
 @Composable
 private fun ActiveWorkoutSession(
     database: AppDatabase,
@@ -312,56 +554,27 @@ private fun ActiveWorkoutSession(
     onExitRequested: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    // Both start from a plain default and get corrected moments later by the LaunchedEffect below
-    // (WeightUnitStore/WorkoutSessionStore reads are suspend now that they're DataStore-backed) --
-    // same "default then async-correct" pattern used throughout this DataStore migration. The
-    // resumed slot/set position briefly showing 0/1 before snapping to the real value is the one
-    // user-visible tradeoff, and it resolves within the same DataStore-read's worth of time (a
-    // local file read, effectively instant) as every other converted call site in this round.
-    var unit by remember { mutableStateOf(WeightUnit.LB) }
+    // Application context, not the Activity one LocalContext.current would give — this gets held
+    // by the ViewModel across recompositions/config changes, so it must never be Activity-scoped.
+    val context = LocalContext.current.applicationContext
+
+    val viewModel = viewModel<WorkoutViewModel>(
+        key = plan.scheduledWorkout.id.toString(),
+        factory = viewModelFactory { initializer { WorkoutViewModel(database, context, profile, plan) } },
+    )
+    val state by viewModel.uiState.collectAsState()
+
     var showExitConfirm by remember { mutableStateOf(false) }
-
-    var slots by remember(plan.scheduledWorkout.id) { mutableStateOf(plan.slots) }
-    var slotIndex by remember(plan.scheduledWorkout.id) { mutableIntStateOf(0) }
-    var setNumber by remember(plan.scheduledWorkout.id) { mutableIntStateOf(1) }
-    var totalLogged by remember(plan.scheduledWorkout.id) { mutableIntStateOf(0) }
-    var finished by remember(plan.scheduledWorkout.id) { mutableStateOf(false) }
-    var celebrationGifUrl by remember(plan.scheduledWorkout.id) { mutableStateOf<String?>(null) }
-    var nextWorkoutPreview by remember(plan.scheduledWorkout.id) { mutableStateOf<NextWorkoutPreview?>(null) }
-    var sessionSetLogs by remember(plan.scheduledWorkout.id) { mutableStateOf<List<SetLog>>(emptyList()) }
-
-    LaunchedEffect(plan.scheduledWorkout.id) {
-        unit = WeightUnitStore.get(context)
-        val resumed = WorkoutSessionStore.resumeFor(context, plan.scheduledWorkout.id)
-        if (resumed != null) {
-            val resumedSlotIndex = resumed.slotIndex.coerceIn(0, plan.slots.size - 1)
-            slotIndex = resumedSlotIndex
-            setNumber = resumed.setNumber.coerceIn(1, plan.slots[resumedSlotIndex].prescribedSet.sets)
-        }
-    }
-
-    // Prefetched the moment the session starts, not at completion — a real workout takes minutes,
-    // so by the time the last set is logged the network round-trip to Giphy is long done, and the
-    // completion screen shows a gif instantly instead of visibly waiting on it. Two separate
-    // LaunchedEffects so the regular and milestone fetches run concurrently, not one after another.
-    var prefetchedRegularGif by remember(plan.scheduledWorkout.id) { mutableStateOf<String?>(null) }
-    var prefetchedMilestoneGif by remember(plan.scheduledWorkout.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(plan.scheduledWorkout.id) { prefetchedRegularGif = GiphyApi.randomCelebrationGifUrl(milestone = false) }
-    LaunchedEffect(plan.scheduledWorkout.id) { prefetchedMilestoneGif = GiphyApi.randomCelebrationGifUrl(milestone = true) }
-
-    LaunchedEffect(finished) {
-        if (finished) {
-            nextWorkoutPreview = loadNextWorkoutPreview(database)
-            sessionSetLogs = database.setLogDao().getForScheduledWorkout(plan.scheduledWorkout.id)
-        }
-    }
+    var showInstructions by remember(state.slotIndex) { mutableStateOf(false) }
+    var showSubstitutePicker by remember { mutableStateOf(false) }
+    var substituteOptions by remember { mutableStateOf<List<Exercise>>(emptyList()) }
+    var showShortfallDialog by remember(state.slotIndex, state.setNumber) { mutableStateOf(false) }
 
     // Immersive mode round — once the session's actually finished, the completion card has its own
     // "Done" button and there's no more in-progress state to protect, so back behaves normally
     // again. Progress up to any point is already durable via WorkoutSessionStore either way — this
     // is purely about not losing your place in the flow to an accidental back press/gesture.
-    BackHandler(enabled = !finished) { showExitConfirm = true }
+    BackHandler(enabled = !state.finished) { showExitConfirm = true }
     if (showExitConfirm) {
         ExitConfirmDialog(
             onKeepGoing = { showExitConfirm = false },
@@ -369,155 +582,32 @@ private fun ActiveWorkoutSession(
         )
     }
 
-    // Inactivity-check round — "if the user does nothing for 5 minutes, check they're still
-    // engaged." lastInteraction is stamped by a passive touch watcher on the root Column below
-    // (every pointer event, not consumed — the existing picker/button gestures are untouched).
-    // Polls rather than a single delayed alarm so it naturally re-arms on real activity without
-    // cancel/reschedule bookkeeping; only fires once per idle stretch (won't fire again until
-    // either real activity resets the clock, or another full 5 minutes passes since the last fire).
-    var lastInteraction by remember(plan.scheduledWorkout.id) { mutableStateOf(System.currentTimeMillis()) }
-    var lastInactivityNotification by remember(plan.scheduledWorkout.id) { mutableStateOf<Long?>(null) }
-    LaunchedEffect(plan.scheduledWorkout.id, finished) {
-        if (finished) return@LaunchedEffect
-        while (true) {
-            delay(30_000)
-            val now = System.currentTimeMillis()
-            val idleFor = now - lastInteraction
-            val sinceLastNotification = lastInactivityNotification?.let { now - it }
-            if (idleFor >= INACTIVITY_THRESHOLD_MS && (sinceLastNotification == null || sinceLastNotification >= INACTIVITY_THRESHOLD_MS)) {
-                NotificationHelper.notifyWorkoutInactivity(context)
-                lastInactivityNotification = now
-            }
-        }
-    }
-
-    if (finished) {
+    if (state.finished) {
         WorkoutCompleteCard(
-            dayLabel = plan.dayLabel,
-            totalSets = totalLogged,
-            gifUrl = celebrationGifUrl,
-            nextWorkout = nextWorkoutPreview,
-            accomplishment = summarizeAccomplishment(sessionSetLogs, slots, unit),
+            dayLabel = viewModel.dayLabel,
+            totalSets = state.totalLogged,
+            gifUrl = state.celebrationGifUrl,
+            nextWorkout = state.nextWorkoutPreview,
+            accomplishment = summarizeAccomplishment(state.sessionSetLogs, state.slots, state.unit),
             onDone = onFinished,
         )
         return
     }
 
-    val slot = slots[slotIndex]
+    val slot = state.slots[state.slotIndex]
     val hasWeight = exerciseHasWeight(slot.exercise.equipment)
-
-    // Computed once per exercise (not per set) and held constant across every set of that
-    // exercise — the suggestion should only move between real sessions (per the progression
-    // doc's week/every-other-week cadence), never mid-session from set to set.
-    var targetReps by remember(slotIndex) { mutableIntStateOf(slot.prescribedSet.repsMin) }
-    var suggestedWeightKg by remember(slotIndex) { mutableStateOf<Float?>(null) }
-    var suggestionFromHistory by remember(slotIndex) { mutableStateOf(false) }
-    var justBumpedWeight by remember(slotIndex) { mutableStateOf(false) }
-    var showInstructions by remember(slotIndex) { mutableStateOf(false) }
-    var showSubstitutePicker by remember { mutableStateOf(false) }
-    var substituteOptions by remember { mutableStateOf<List<Exercise>>(emptyList()) }
-
-    // Values, not strings — a scroll picker always has a definite selection, so there's no
-    // "invalid text" state to track the way the old free-text fields needed.
-    var weightValue by remember(slotIndex, setNumber) {
-        mutableStateOf(if (hasWeight) suggestedWeightKg?.let { convertToDisplay(it, unit) } ?: 0f else 0f)
-    }
-    var repsValue by remember(slotIndex, setNumber) { mutableIntStateOf(targetReps) }
-    var rpe by remember(slotIndex, setNumber) { mutableStateOf<Int?>(null) }
-    var showShortfallDialog by remember(slotIndex, setNumber) { mutableStateOf(false) }
-
-    LaunchedEffect(slot.exercise.id) {
-        val result = suggestProgression(database, slot.exercise, slot.prescribedSet, profile, unit, plan.scheduledWorkout.id)
-        targetReps = result.targetReps
-        repsValue = result.targetReps
-        suggestionFromHistory = result.weightFromHistory
-        justBumpedWeight = result.justBumpedWeight
-        suggestedWeightKg = result.suggestedWeightKg
-        if (hasWeight) {
-            weightValue = result.suggestedWeightKg?.let { convertToDisplay(it, unit) } ?: 0f
-        }
-    }
-
-    fun applySubstitution(picked: Exercise) {
-        slots = slots.toMutableList().also { it[slotIndex] = it[slotIndex].copy(exercise = picked) }
-        scope.launch {
-            saveExerciseOverride(database, plan.scheduledWorkout.id, slot.prescribedSet.id, picked.id)
-        }
-    }
-
-    fun commitSetLog(reason: String?) {
-        val reps = repsValue
-        val weight = if (hasWeight) convertToKg(weightValue, unit) else null
-        scope.launch {
-            database.setLogDao().insert(
-                SetLog(
-                    scheduledWorkoutId = plan.scheduledWorkout.id,
-                    exerciseId = slot.exercise.id,
-                    setNumber = setNumber,
-                    prescribedWeight = suggestedWeightKg,
-                    prescribedReps = targetReps,
-                    actualWeight = weight,
-                    actualReps = reps,
-                    shortfallReason = reason,
-                    rpe = rpe,
-                    timestamp = System.currentTimeMillis(),
-                ),
-            )
-        }
-        totalLogged += 1
-        showShortfallDialog = false
-        if (setNumber < slot.prescribedSet.sets) {
-            setNumber += 1
-        } else if (slotIndex < slots.size - 1) {
-            slotIndex += 1
-            setNumber = 1
-        } else {
-            scope.launch {
-                database.scheduledWorkoutDao().update(
-                    plan.scheduledWorkout.copy(status = "completed", completedDate = System.currentTimeMillis()),
-                )
-                // No points/streak ledger anymore — "milestone" is just every 5th completed
-                // workout ever, derived on the spot, purely to pick a livelier Giphy tag pool.
-                // Nothing reads or displays this number; it only ever selects which prefetch to use.
-                val isMilestone = database.scheduledWorkoutDao().getAllCompleted().size % 5 == 0
-                // Uses whichever prefetch already landed — only falls back to a fresh (slower)
-                // fetch if the session was too short for the prefetch to finish in time. This is
-                // also what gets persisted, so a later visit shows this exact gif, not a re-roll.
-                val gifUrl = (if (isMilestone) prefetchedMilestoneGif else prefetchedRegularGif)
-                    ?: GiphyApi.randomCelebrationGifUrl(isMilestone)
-                celebrationGifUrl = gifUrl
-                WorkoutCelebrationStore.save(context, WorkoutCelebration(plan.scheduledWorkout.id, gifUrl))
-            }
-            finished = true
-        }
-        scope.launch {
-            if (finished) {
-                WorkoutSessionStore.clear(context)
-            } else {
-                WorkoutSessionStore.save(context, WorkoutSessionProgress(plan.scheduledWorkout.id, slotIndex, setNumber))
-            }
-        }
-    }
-
-    fun onLogTapped() {
-        if (repsValue < targetReps) {
-            showShortfallDialog = true
-        } else {
-            commitSetLog(null)
-        }
-    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             // Inactivity-check round — observes every touch at the Initial pass (before any child
-            // gesture handler sees it) purely to stamp lastInteraction; never consumes, so existing
-            // picker/button/tap handling elsewhere in this screen is completely unaffected.
+            // gesture handler sees it) purely to stamp the ViewModel's lastInteraction; never
+            // consumes, so existing picker/button/tap handling elsewhere is completely unaffected.
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
                         awaitPointerEvent(PointerEventPass.Initial)
-                        lastInteraction = System.currentTimeMillis()
+                        viewModel.recordInteraction()
                     }
                 }
             }
@@ -526,9 +616,9 @@ private fun ActiveWorkoutSession(
         verticalArrangement = Arrangement.spacedBy(Spacing.space4),
     ) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Text(text = plan.dayLabel.uppercase(), color = FueruColors.TextMuted, style = FueruType.overline)
+            Text(text = viewModel.dayLabel.uppercase(), color = FueruColors.TextMuted, style = FueruType.overline)
             Text(
-                text = "exercise ${slotIndex + 1} of ${slots.size} · set $setNumber of ${slot.prescribedSet.sets}",
+                text = "exercise ${state.slotIndex + 1} of ${state.slots.size} · set ${state.setNumber} of ${slot.prescribedSet.sets}",
                 color = FueruColors.TextSecondary,
                 style = FueruType.caption,
             )
@@ -558,7 +648,7 @@ private fun ActiveWorkoutSession(
             if (slot.prescribedSet.isTensionFocus) {
                 FueruTag(text = "tension focus", variant = FueruTagVariant.Fire)
             }
-            if (slot.prescribedSet.isDropSetFinal && setNumber == slot.prescribedSet.sets) {
+            if (slot.prescribedSet.isDropSetFinal && state.setNumber == slot.prescribedSet.sets) {
                 FueruTag(text = "drop set", variant = FueruTagVariant.Fire)
             }
         }
@@ -571,7 +661,7 @@ private fun ActiveWorkoutSession(
             Text(text = slot.exercise.instructions, color = FueruColors.TextMuted, style = FueruType.caption)
         }
 
-        if (setNumber == 1) {
+        if (state.setNumber == 1) {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2), modifier = Modifier.fillMaxWidth()) {
                 FueruButton(
                     text = "Suggest a different exercise",
@@ -579,10 +669,10 @@ private fun ActiveWorkoutSession(
                     modifier = Modifier.weight(1f),
                     onClick = {
                         scope.launch {
-                            val suggestions = loadSubstitutes(database, slot.exercise, profile.equipmentPreference)
+                            val suggestions = viewModel.loadSubstituteOptionsForCurrentSlot()
                             val autoPick = suggestions.firstOrNull()
                             if (autoPick != null) {
-                                applySubstitution(autoPick)
+                                viewModel.applySubstitution(autoPick)
                             } else {
                                 // Nothing shares this muscle group — fall back to the full picker,
                                 // which shows its own "no alternatives found" message.
@@ -598,7 +688,7 @@ private fun ActiveWorkoutSession(
                     modifier = Modifier.weight(1f),
                     onClick = {
                         scope.launch {
-                            substituteOptions = loadSubstitutes(database, slot.exercise, profile.equipmentPreference)
+                            substituteOptions = viewModel.loadSubstituteOptionsForCurrentSlot()
                             showSubstitutePicker = true
                         }
                     },
@@ -609,52 +699,52 @@ private fun ActiveWorkoutSession(
         FueruCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
                 if (hasWeight) {
-                    val targetWeightDisplay = suggestedWeightKg?.let { formatWeightValue(convertToDisplay(it, unit)) }
+                    val targetWeightDisplay = state.suggestedWeightKg?.let { formatWeightValue(convertToDisplay(it, state.unit)) }
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space3), modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Weight (${unit.label})" + (targetWeightDisplay?.let { " · target $it" } ?: ""),
+                                text = "Weight (${state.unit.label})" + (targetWeightDisplay?.let { " · target $it" } ?: ""),
                                 color = if (targetWeightDisplay != null) FueruColors.Fire4 else FueruColors.TextSecondary,
                                 style = FueruType.caption,
                             )
                             FueruWeightScrollPicker(
-                                value = weightValue,
-                                onValueChange = { weightValue = it },
-                                recommendedValue = suggestedWeightKg?.let { convertToDisplay(it, unit) },
+                                value = state.weightValue,
+                                onValueChange = viewModel::onWeightChange,
+                                recommendedValue = state.suggestedWeightKg?.let { convertToDisplay(it, state.unit) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Reps · target $targetReps",
+                                text = "Reps · target ${state.targetReps}",
                                 color = FueruColors.Fire4,
                                 style = FueruType.caption,
                             )
                             FueruRepsScrollPicker(
-                                reps = repsValue,
-                                onRepsChange = { repsValue = it },
-                                recommendedReps = targetReps,
+                                reps = state.repsValue,
+                                onRepsChange = viewModel::onRepsChange,
+                                recommendedReps = state.targetReps,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
-                    if (suggestedWeightKg != null) {
+                    if (state.suggestedWeightKg != null) {
                         Text(
                             text = when {
-                                justBumpedWeight -> "nice — weight went up from last time"
-                                suggestionFromHistory -> "based on your last session"
+                                state.justBumpedWeight -> "nice — weight went up from last time"
+                                state.suggestionFromHistory -> "based on your last session"
                                 else -> "starting estimate for your level"
                             },
-                            color = if (justBumpedWeight) FueruColors.Fire4 else FueruColors.TextMuted,
+                            color = if (state.justBumpedWeight) FueruColors.Fire4 else FueruColors.TextMuted,
                             style = FueruType.caption,
                         )
                     }
                 } else {
-                    Text(text = "Reps · target $targetReps", color = FueruColors.Fire4, style = FueruType.caption)
+                    Text(text = "Reps · target ${state.targetReps}", color = FueruColors.Fire4, style = FueruType.caption)
                     FueruRepsScrollPicker(
-                        reps = repsValue,
-                        onRepsChange = { repsValue = it },
-                        recommendedReps = targetReps,
+                        reps = state.repsValue,
+                        onRepsChange = viewModel::onRepsChange,
+                        recommendedReps = state.targetReps,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -665,14 +755,20 @@ private fun ActiveWorkoutSession(
                         (6..10).forEach { value ->
                             FueruWeekdayChip(
                                 label = value.toString(),
-                                selected = rpe == value,
-                                onClick = { rpe = if (rpe == value) null else value },
+                                selected = state.rpe == value,
+                                onClick = { viewModel.onRpeChange(value) },
                             )
                         }
                     }
                 }
 
-                FueruButton(text = "Log set", onClick = ::onLogTapped, modifier = Modifier.fillMaxWidth())
+                FueruButton(
+                    text = "Log set",
+                    onClick = {
+                        if (state.repsValue < state.targetReps) showShortfallDialog = true else viewModel.logSet(null)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
@@ -681,7 +777,7 @@ private fun ActiveWorkoutSession(
         FueruSubstituteDialog(
             options = substituteOptions,
             onPick = { picked ->
-                applySubstitution(picked)
+                viewModel.applySubstitution(picked)
                 showSubstitutePicker = false
             },
             onDismiss = { showSubstitutePicker = false },
@@ -690,11 +786,11 @@ private fun ActiveWorkoutSession(
 
     if (showShortfallDialog) {
         ShortfallDialog(
-            targetReps = targetReps,
-            actualReps = repsValue,
-            weightDisplay = if (hasWeight) "${formatWeightValue(weightValue)} ${unit.label}" else null,
-            onCouldnt = { commitSetLog("couldnt") },
-            onChoseNotTo = { commitSetLog("choseNotTo") },
+            targetReps = state.targetReps,
+            actualReps = state.repsValue,
+            weightDisplay = if (hasWeight) "${formatWeightValue(state.weightValue)} ${state.unit.label}" else null,
+            onCouldnt = { viewModel.logSet("couldnt"); showShortfallDialog = false },
+            onChoseNotTo = { viewModel.logSet("choseNotTo"); showShortfallDialog = false },
             onDismiss = { showShortfallDialog = false },
         )
     }
