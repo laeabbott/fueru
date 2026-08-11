@@ -24,15 +24,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import com.fueru.app.FueruApplication
-import com.fueru.app.data.PracticeScoring
 import com.fueru.app.data.TodayPracticeSlot
 import com.fueru.app.data.computeTodaysPracticePlan
 import com.fueru.app.data.entity.Practice
-import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
-import com.fueru.app.ui.components.FueruPracticeHeatmap
 import com.fueru.app.ui.components.FueruTag
 import com.fueru.app.ui.components.FueruTagVariant
 import com.fueru.app.ui.components.FueruTextField
@@ -118,29 +115,23 @@ fun PracticesScreen(onOpenPractice: (Long) -> Unit, onBack: () -> Unit) {
     }
 }
 
+/**
+ * Progress-consolidation round — used to also show a mini score + heatmap per row; that's progress,
+ * so it moved to the Progress tab along with every other practice's (and this list is now a pure
+ * nav/management list). The due/overdue/logged tag stays — that's today's actionable status, not
+ * retrospective progress.
+ */
 @Composable
 private fun PracticeListCard(practice: Practice, today: TodayPracticeSlot?, onClick: () -> Unit) {
-    val application = LocalContext.current.applicationContext as FueruApplication
-    val entries by application.database.practiceLogEntryDao()
-        .observeForPractice(practice.id)
-        .collectAsState(initial = emptyList<PracticeLogEntry>())
-    val score = remember(entries, practice.halfLifeDays) { PracticeScoring.currentScore(entries, practice.halfLifeDays) }
-
     FueruCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
-                    Text(text = practice.name, color = FueruColors.TextPrimary, style = FueruType.bodyLg)
-                    when {
-                        today == null -> Unit
-                        today.loggedStatus != null -> FueruTag(text = today.loggedStatus)
-                        today.isOverdue -> FueruTag(text = "overdue", variant = FueruTagVariant.Danger)
-                        else -> FueruTag(text = "due today", variant = FueruTagVariant.Fire)
-                    }
-                }
-                Text(text = score.toInt().toString(), color = FueruColors.Fire4, style = FueruType.statSm)
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            Text(text = practice.name, color = FueruColors.TextPrimary, style = FueruType.bodyLg)
+            when {
+                today == null -> Unit
+                today.loggedStatus != null -> FueruTag(text = today.loggedStatus)
+                today.isOverdue -> FueruTag(text = "overdue", variant = FueruTagVariant.Danger)
+                else -> FueruTag(text = "due today", variant = FueruTagVariant.Fire)
             }
-            FueruPracticeHeatmap(entries = entries, weeksShown = 6)
         }
     }
 }

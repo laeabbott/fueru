@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-app logging round — exposes only AppLogger's own "logs" subdirectory of filesDir, nothing else in app-private storage. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="logs" path="logs/" />
+</paths>

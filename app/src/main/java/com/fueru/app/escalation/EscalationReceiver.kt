@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.fueru.app.FueruApplication
+import com.fueru.app.data.AppLogger
 import com.fueru.app.data.PracticeStartStore
 import com.fueru.app.notifications.NotificationHelper
 import java.time.LocalDate
@@ -33,7 +34,11 @@ class EscalationReceiver : BroadcastReceiver() {
                 val alreadyLogged = application.database.practiceLogEntryDao()
                     .getForPracticeAndDate(practiceId, today) != null
                 val alreadyStarted = PracticeStartStore.isStarted(context, practiceId, today)
-                if (alreadyLogged || alreadyStarted) return@launch
+                if (alreadyLogged || alreadyStarted) {
+                    AppLogger.log(context, "Escalation", "stage $stage for '$practiceName' suppressed — already logged=$alreadyLogged started=$alreadyStarted")
+                    return@launch
+                }
+                AppLogger.log(context, "Escalation", "stage $stage firing for '$practiceName'")
 
                 when (stage) {
                     STAGE_UPCOMING -> NotificationHelper.notifyEscalationUpcoming(context, practiceId, practiceName)

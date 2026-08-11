@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import com.fueru.app.FueruApplication
+import com.fueru.app.data.AppLogger
 import com.fueru.app.data.GuidedSessionDefaultStore
 import com.fueru.app.data.IcsCalendarStore
 import com.fueru.app.data.IgnoredEventStore
@@ -128,8 +129,9 @@ fun SettingsProfileScreen(onBack: () -> Unit) {
 @Composable
 fun SettingsNotificationsScreen(onBack: () -> Unit) {
     val application = LocalContext.current.applicationContext as FueruApplication
+    var exportMessage by remember { mutableStateOf<String?>(null) }
 
-    SettingsSubScaffold(title = "notifications & alerts", onBack = onBack) {
+    SettingsSubScaffold(title = "notifications & diagnostics", onBack = onBack) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
             Text(text = "escalation alerts", color = FueruColors.TextSecondary, style = FueruType.title)
             FueruCard(modifier = Modifier.fillMaxWidth()) {
@@ -156,6 +158,31 @@ fun SettingsNotificationsScreen(onBack: () -> Unit) {
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
+                    }
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            Text(text = "logs", color = FueruColors.TextSecondary, style = FueruType.title)
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                    Text(
+                        text = "A running log of scheduling, notifications, and crashes — export it and send it over if something's gone wrong and you want it looked at.",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                    )
+                    FueruButton(
+                        text = "Export logs",
+                        variant = FueruButtonVariant.Secondary,
+                        onClick = {
+                            val shared = AppLogger.shareLogFile(application)
+                            exportMessage = if (shared) null else "Nothing logged yet."
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    exportMessage?.let {
+                        Text(text = it, color = FueruColors.TextMuted, style = FueruType.caption)
                     }
                 }
             }

@@ -24,7 +24,7 @@ private data class SettingsCategory(val label: String, val subtitle: String, val
 
 private val categories = listOf(
     SettingsCategory("Profile & Units", "Display name, kg/lb", FueruRoutes.SETTINGS_PROFILE),
-    SettingsCategory("Notifications & Alerts", "Exact-alarm permission for escalation", FueruRoutes.SETTINGS_NOTIFICATIONS),
+    SettingsCategory("Notifications & Diagnostics", "Exact-alarm permission, export logs", FueruRoutes.SETTINGS_NOTIFICATIONS),
     SettingsCategory("Food Tracking", "Turn tracking on or off", FueruRoutes.SETTINGS_FOOD),
     SettingsCategory("Calendar", "Imported calendar data", FueruRoutes.SETTINGS_CALENDAR),
     SettingsCategory("Practices", "Bottom-nav tabs, vacation, session length", FueruRoutes.SETTINGS_PRACTICES),

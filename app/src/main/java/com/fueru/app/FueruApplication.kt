@@ -5,6 +5,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.fueru.app.data.AppDatabase
+import com.fueru.app.data.AppLogger
 import com.fueru.app.data.seed.ensureSeeded
 import com.fueru.app.escalation.EscalationScheduler
 import com.fueru.app.notifications.DailyNudgeWorker
@@ -20,6 +21,9 @@ class FueruApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // In-app logging round — installed first, before anything else has a chance to crash.
+        AppLogger.installUncaughtExceptionHandler(this)
+        AppLogger.log(this, "App", "onCreate")
         // Defensive re-seed on every launch, not just RoomDatabase.Callback.onCreate — cheap COUNT
         // check, self-heals if a schema migration ever leaves the program table empty.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {

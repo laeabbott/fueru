@@ -14,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.fueru.app.MainActivity
 import com.fueru.app.R
+import com.fueru.app.data.AppLogger
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -60,8 +61,13 @@ object NotificationHelper {
 
     private fun canPostNotifications(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
-        return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
+        // In-app logging round — a silently-blocked notification (permission revoked after
+        // onboarding, most likely) is exactly the kind of thing that's invisible from the UI and
+        // worth catching here, in the one place every notify* method already funnels through.
+        if (!granted) AppLogger.log(context, "Notification", "blocked — POST_NOTIFICATIONS not granted")
+        return granted
     }
 
     @SuppressLint("MissingPermission") // guarded by canPostNotifications()
@@ -193,6 +199,30 @@ object NotificationHelper {
     }
 
     private const val VACATION_NOTIFICATION_ID_BASE = 4000
+    private const val WORKOUT_INACTIVITY_NOTIFICATION_ID = 5000
+
+    /** Inactivity-check round — fires after 5 min of no touch activity during an active workout session (see WorkoutScreen.kt's ActiveWorkoutSession). Plain nudge channel, not escalation — this isn't "you're avoiding it," it's "did you wander off mid-set." */
+    @SuppressLint("MissingPermission") // guarded by canPostNotifications()
+    fun notifyWorkoutInactivity(context: Context) {
+        if (!canPostNotifications(context)) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_bell)
+            .setContentTitle("still there?")
+            .setContentText("tap to get back to your workout")
+            .setAutoCancel(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    context,
+                    WORKOUT_INACTIVITY_NOTIFICATION_ID,
+                    Intent(context, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            .build()
+        NotificationManagerCompat.from(context).notify(WORKOUT_INACTIVITY_NOTIFICATION_ID, notification)
+    }
 
     /** Vacation-practices round — fires on the last vacation day, using the plain planning/workout-nudge channel (not the escalation one — this is informational, not an alert). */
     @SuppressLint("MissingPermission") // guarded by canPostNotifications()

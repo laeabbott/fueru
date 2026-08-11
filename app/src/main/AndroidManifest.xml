@@ -78,6 +78,19 @@
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
             android:theme="@style/Theme.Fueru" />
+
+        <!-- In-app logging round — the only way a content:// URI for the private log file can be
+             handed to another app's share sheet (Settings' "Export logs"). Standard FileProvider
+             pattern, not itself a system broadcast receiver like the others above. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

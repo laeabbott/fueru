@@ -2,6 +2,7 @@ package com.fueru.app.data.seed
 
 import android.content.Context
 import com.fueru.app.data.AppDatabase
+import com.fueru.app.data.AppLogger
 import com.fueru.app.data.entity.PrescribedSet
 import com.fueru.app.data.entity.Practice
 import com.fueru.app.data.entity.ProgramDay
@@ -17,10 +18,30 @@ const val FUWARI_PRACTICE_NAME = "fuwari"
  */
 suspend fun ensureSeeded(context: Context, database: AppDatabase) {
     if (database.programDayDao().count() == 0) {
+        AppLogger.log(context, "Seed", "programDay table empty — running first-launch seedDatabase()")
         seedDatabase(database)
     }
     ensureExerciseCatalogSeeded(context, database)
     ensureFuwariSeeded(database)
+    ensureNewOriginalExercisesSeeded(context, database)
+}
+
+/**
+ * Bodyweight-coverage round — [seedDatabase] only ever runs once, on a true first launch (or a
+ * destructive-migration recreate), so any *new* entry added to [ExerciseSeed.all] afterward (like
+ * "inverted_row") needs its own idempotent insert here, checked and run on every start same as
+ * [ensureFuwariSeeded]. Deliberately inserts only the specific missing rows one at a time, never the
+ * whole [ExerciseSeed.all] list — `insertAll` is `REPLACE`-on-conflict, and Exercise has real
+ * `ON DELETE CASCADE` children (`PrescribedSet`, `SetLog`); re-inserting an *already-present*
+ * exercise id would delete-then-recreate that row, cascading away any program assignment or logged
+ * set history pointing at it. Only ever add ids here that are genuinely new.
+ */
+private suspend fun ensureNewOriginalExercisesSeeded(context: Context, database: AppDatabase) {
+    val newIds = setOf("inverted_row")
+    val missing = newIds.filter { database.exerciseDao().getById(it) == null }
+    if (missing.isEmpty()) return
+    database.exerciseDao().insertAll(ExerciseSeed.all.filter { it.id in missing })
+    AppLogger.log(context, "Seed", "inserted new original exercises: $missing")
 }
 
 /**

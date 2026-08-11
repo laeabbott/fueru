@@ -273,5 +273,19 @@ object ExerciseSeed {
             imageAssetPaths = emptyList(),
             instructions = "1. Attach a single handle to a low cable pulley and stand facing away from the machine.\n2. Reach behind your back and grasp the handle with your working arm, palm facing away from your body.\n3. Keeping your upper arm still, extend your elbow to pull the handle up and back behind you.\n4. Pause briefly at the top, then return under control to the starting position.\n5. Complete all reps on one side before switching arms.",
         ),
+        // Bodyweight-coverage round — the catalog has zero "body only" exercises anywhere under
+        // "middle back" (checked: 0 of 37 middle-back exercises), so a broken cable row/pulldown
+        // station or barbell rack had no bodyweight fallback at all for a rowing movement. This one
+        // closes that gap; every other muscle group used by the seeded program already has real
+        // bodyweight coverage.
+        Exercise(
+            id = "inverted_row",
+            name = "Inverted Row",
+            primaryMuscle = "middle back",
+            secondaryMuscles = listOf("biceps", "lats"),
+            equipment = "body only",
+            imageAssetPaths = emptyList(),
+            instructions = "1. Set a bar (a squat rack's safety bar, a sturdy table edge, or suspension straps) at about waist height.\n2. Lie underneath it and grab it with an overhand grip, hands roughly shoulder-width apart, body straight from heels to head, arms fully extended.\n3. Keeping your body rigid, pull your chest up toward the bar by driving your elbows back and squeezing your shoulder blades together.\n4. Pause briefly at the top, then lower under control back to a full arm extension.\n5. Walk your feet further out (more horizontal body) to make it harder, or bend your knees and stand your feet closer in to make it easier.",
+        ),
     )
 }

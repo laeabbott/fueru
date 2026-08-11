@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import com.fueru.app.data.AppDatabase
+import com.fueru.app.data.AppLogger
 import com.fueru.app.data.PracticeStartStore
 import com.fueru.app.data.processDailyVacations
 import java.time.LocalDate
@@ -59,13 +60,17 @@ object EscalationScheduler {
         processDailyVacations(context, database)
 
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
-        if (!EscalationPermissions.canScheduleExactAlarms(context)) return
+        if (!EscalationPermissions.canScheduleExactAlarms(context)) {
+            AppLogger.log(context, "Escalation", "scheduleTodaysEscalations skipped — exact-alarm permission not granted")
+            return
+        }
 
         val today = LocalDate.now()
         val todayIso = today.toString()
         val todayDayOfWeek = today.dayOfWeek.value
         val slots = database.practiceScheduledSlotDao().getAll()
             .filter { it.dayOfWeek == todayDayOfWeek && it.timeOfDay != null }
+        AppLogger.log(context, "Escalation", "scheduleTodaysEscalations: ${slots.size} slot(s) due today")
 
         for (slot in slots) {
             val alreadyLogged = database.practiceLogEntryDao().getForPracticeAndDate(slot.practiceId, todayIso) != null

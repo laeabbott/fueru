@@ -27,14 +27,17 @@ suspend fun processDailyVacations(context: Context, database: AppDatabase) {
         when {
             vacationUntil.isBefore(today) -> {
                 database.practiceDao().update(practice.copy(vacationUntilDate = null))
+                AppLogger.log(context, "Vacation", "cleared expired vacation for '${practice.name}'")
             }
             vacationUntil.isEqual(today) -> {
                 NotificationHelper.notifyVacationEnding(context, practice.id, practice.name)
                 writeVacationSkip(database, practice.id, todayIso)
+                AppLogger.log(context, "Vacation", "'${practice.name}' resumes tomorrow — notified, wrote today's skip")
             }
             else -> {
                 // Still mid-vacation (vacationUntil is after today).
                 writeVacationSkip(database, practice.id, todayIso)
+                AppLogger.log(context, "Vacation", "'${practice.name}' still vacationed through $vacationUntil — wrote today's skip")
             }
         }
     }

@@ -23,13 +23,18 @@ import com.fueru.app.FueruApplication
 import com.fueru.app.R
 import com.fueru.app.data.CompletedSession
 import com.fueru.app.data.ExerciseProgress
+import com.fueru.app.data.PracticeScoring
 import com.fueru.app.data.ProgressOverview
 import com.fueru.app.data.WeightUnit
 import com.fueru.app.data.WeightUnitStore
 import com.fueru.app.data.convertToDisplay
 import com.fueru.app.data.formatWeightValue
 import com.fueru.app.data.loadProgressOverview
+import com.fueru.app.data.entity.GuidedSession
+import com.fueru.app.data.entity.Practice
+import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.ui.components.FueruCard
+import com.fueru.app.ui.components.FueruPracticeHeatmap
 import com.fueru.app.ui.components.FueruStatChip
 import com.fueru.app.ui.components.FueruTypewriterText
 import com.fueru.app.ui.theme.FueruColors
@@ -37,6 +42,7 @@ import com.fueru.app.ui.theme.FueruGradients
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Spacing
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -53,9 +59,13 @@ private val progressGreetings = listOf(
 )
 
 /**
- * Overview stats + history (spec Section 5.4). Per-exercise charts and phase-progress visuals are
- * a further follow-up — this pass surfaces the SetLog/ScheduledWorkout history the Workout screen
- * now generates, since there was nothing to show here before that existed.
+ * Overview stats + history (spec Section 5.4), plus every practice's own progress (progress-
+ * consolidation round — score/heatmap used to live on each practice's own detail screen and again,
+ * smaller, on the Practices list; both now point here instead, so this tab is the one place any
+ * kind of backward-looking progress shows up, for workouts and every practice alike). Per-exercise
+ * charts and phase-progress visuals are a further follow-up — this pass surfaces the SetLog/
+ * ScheduledWorkout history the Workout screen now generates, since there was nothing to show here
+ * before that existed.
  */
 @Composable
 fun ProgressScreen() {
@@ -70,6 +80,7 @@ fun ProgressScreen() {
     LaunchedEffect(Unit) {
         overview = loadProgressOverview(database)
     }
+    val practices by database.practiceDao().observeAll().collectAsState(initial = emptyList())
     val current = overview ?: return
 
     Column(
@@ -83,7 +94,7 @@ fun ProgressScreen() {
         val greeting = remember { progressGreetings.random() }
         FueruTypewriterText(text = greeting, color = FueruColors.TextSecondary, style = FueruType.headline)
 
-        if (current.completedSessions.isEmpty() && current.exerciseProgress.isEmpty()) {
+        if (current.completedSessions.isEmpty() && current.exerciseProgress.isEmpty() && practices.isEmpty()) {
             FueruCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = "finish your first workout to start seeing history here.",
@@ -126,8 +137,81 @@ fun ProgressScreen() {
                 }
             }
         }
+
+        if (practices.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                Text(text = "practices", color = FueruColors.TextSecondary, style = FueruType.title)
+                practices.forEach { practice ->
+                    PracticeProgressCard(practice = practice)
+                }
+            }
+        }
     }
 }
+
+// ---- Practice progress (progress-consolidation round) ------------------------------------------
+
+/**
+ * One practice's full progress picture — score, 7-/30-day windows, heatmap, and recent guided
+ * sessions if applicable. Same content that used to live on PracticeDetailScreen's own "progress"
+ * section (and, smaller, on the Practices list) — extracted here since that's the only place any
+ * practice's progress should show now.
+ */
+@Composable
+private fun PracticeProgressCard(practice: Practice) {
+    val application = LocalContext.current.applicationContext as FueruApplication
+    val database = application.database
+
+    val entries by database.practiceLogEntryDao()
+        .observeForPractice(practice.id)
+        .collectAsState(initial = emptyList<PracticeLogEntry>())
+    val today = remember { LocalDate.now().toString() }
+    val score = remember(entries, practice.halfLifeDays) { PracticeScoring.currentScore(entries, practice.halfLifeDays) }
+    val window7 = remember(entries) { PracticeScoring.windowCompletionRate(entries, 7, today) }
+    val window30 = remember(entries) { PracticeScoring.windowCompletionRate(entries, 30, today) }
+
+    val recentGuidedSessions by database.guidedSessionDao()
+        .observeRecentForPractice(practice.id, 5)
+        .collectAsState(initial = emptyList<GuidedSession>())
+
+    FueruCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+            Text(text = practice.name, color = FueruColors.TextPrimary, style = FueruType.bodyLg)
+            Text(text = score.toInt().toString(), color = FueruColors.Fire4, style = FueruType.statLg)
+            Text(text = "consistency score", color = FueruColors.TextMuted, style = FueruType.caption)
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                FueruStatChip(
+                    icon = painterResource(R.drawable.ic_chart_line_up_fill),
+                    value = "${window7.toInt()}%",
+                    label = "7-day",
+                )
+                FueruStatChip(
+                    icon = painterResource(R.drawable.ic_chart_line_up_fill),
+                    value = "${window30.toInt()}%",
+                    label = "30-day",
+                )
+            }
+            FueruPracticeHeatmap(entries = entries, weeksShown = 12)
+            if (practice.guidedSessionEnabled && recentGuidedSessions.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space1)) {
+                    Text(text = "recent sessions", color = FueruColors.TextMuted, style = FueruType.caption)
+                    recentGuidedSessions.forEach { session ->
+                        Text(
+                            text = "${formatSessionDate(session.timestamp)} · ${session.sessionType} · ${session.durationMinutes} min",
+                            color = FueruColors.TextSecondary,
+                            style = FueruType.caption,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val sessionDateFormatter = DateTimeFormatter.ofPattern("MMM d")
+
+private fun formatSessionDate(epochMillis: Long): String =
+    Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(sessionDateFormatter)
 
 @Composable
 private fun SessionRow(session: CompletedSession) {

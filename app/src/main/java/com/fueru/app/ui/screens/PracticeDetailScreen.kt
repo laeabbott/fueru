@@ -26,16 +26,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import coil3.compose.AsyncImage
 import com.fueru.app.FueruApplication
-import com.fueru.app.R
 import com.fueru.app.data.AppDatabase
 import com.fueru.app.data.BusyBlock
 import com.fueru.app.data.DateUtils
-import com.fueru.app.data.PracticeScoring
 import com.fueru.app.data.PracticeStartStore
 import com.fueru.app.data.ScheduleConflict
 import com.fueru.app.data.allBusyBlocksForDay
@@ -43,7 +40,6 @@ import com.fueru.app.data.celebration.GiphyApi
 import com.fueru.app.data.findScheduleConflicts
 import com.fueru.app.data.mondayOfThisWeek
 import com.fueru.app.data.remainingSlotsIfTargetMet
-import com.fueru.app.data.entity.GuidedSession
 import com.fueru.app.data.entity.PracticeLogEntry
 import com.fueru.app.data.entity.PracticeScheduledSlot
 import com.fueru.app.escalation.EscalationScheduler
@@ -51,8 +47,6 @@ import com.fueru.app.ui.components.FueruBusyBlocksSummary
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
-import com.fueru.app.ui.components.FueruPracticeHeatmap
-import com.fueru.app.ui.components.FueruStatChip
 import com.fueru.app.ui.components.FueruSwitch
 import com.fueru.app.ui.components.FueruTimePickerDialog
 import com.fueru.app.ui.components.FueruWeekdayChip
@@ -61,19 +55,20 @@ import com.fueru.app.ui.theme.FueruColors
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Radius
 import com.fueru.app.ui.theme.Spacing
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import java.time.LocalTime
 import kotlinx.coroutines.launch
 
 /**
- * Heatmap + decay score for one practice, plus schedule management (§5) and the entry point into
- * Resistance Flow (§6) — "I'm resisting this" is the headline action per the brief's "primary path,
- * not a fallback" framing. The Done/Partial/Skip/Miss row stays as a direct-logging fallback (today
- * only) for when the full flow isn't the point — already did it before opening the app, backdating
- * within today, etc. §4.4's display rules: decay score is the headline number, 7-day/30-day windows
- * are secondary, no streak counter anywhere.
+ * Schedule management (§5), stakes, session style, and the entry point into Resistance Flow (§6)
+ * for one practice — "I'm resisting this" is the headline action per the brief's "primary path, not
+ * a fallback" framing, shown only once today's alarm has actually fired and the practice hasn't
+ * already been started/logged/vacationed (resistance-flow gating round — this used to always show).
+ * The Done/Partial/Skip/Miss row stays as a direct-logging fallback (today only, always available
+ * regardless of the gate above) for when the full flow isn't the point — already did it before
+ * opening the app, backdating within today, etc. Progress-consolidation round: this screen no
+ * longer shows score/heatmap/history at all — that's the Progress tab's job now, for every practice,
+ * not just workouts (see ProgressScreen.kt's PracticeProgressCard).
  */
 @Composable
 fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistanceFlow: (startAtIgnite: Boolean) -> Unit) {
@@ -84,14 +79,15 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
     val practice by database.practiceDao().observeById(practiceId).collectAsState(initial = null)
     val current = practice ?: return
 
+    // Progress-consolidation round — this screen used to also read/derive score/window/heatmap
+    // data, all now shown only on the Progress tab (ProgressScreen.kt's PracticeProgressCard).
+    // entries is still needed here, just for todayStatus (gates the manual-log buttons' highlight
+    // and, new this round, the resistance-flow entry card below).
     val entries by database.practiceLogEntryDao()
         .observeForPractice(practiceId)
         .collectAsState(initial = emptyList<PracticeLogEntry>())
 
     val today = remember { LocalDate.now().toString() }
-    val score = remember(entries, current.halfLifeDays) { PracticeScoring.currentScore(entries, current.halfLifeDays) }
-    val window7 = remember(entries) { PracticeScoring.windowCompletionRate(entries, 7, today) }
-    val window30 = remember(entries) { PracticeScoring.windowCompletionRate(entries, 30, today) }
     val todayStatus = remember(entries) { entries.find { it.date == today }?.status }
 
     val slots by database.practiceScheduledSlotDao()
@@ -101,12 +97,23 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
 
     val charityCount by database.charityDao().observeAll().collectAsState(initial = emptyList())
 
-    val recentGuidedSessions by database.guidedSessionDao()
-        .observeRecentForPractice(practiceId, 10)
-        .collectAsState(initial = emptyList<GuidedSession>())
-
     // §E — offer to skip a remaining scheduled day this week once the weekly target's already met.
     var weeklyTargetOfferSlots by remember(practiceId) { mutableStateOf<List<PracticeScheduledSlot>>(emptyList()) }
+
+    // Resistance-flow gating round — "I'm resisting this" only shows once today's alarm has
+    // actually fired (same condition PracticeScheduler.computeTodaysPracticePlan's isOverdue
+    // already uses) and the practice hasn't been started/logged/vacationed — not a general "start
+    // anytime" button. The manual Done/Partial/Skip/Miss row below is untouched by this gate.
+    var hasStarted by remember(practiceId) { mutableStateOf(false) }
+    LaunchedEffect(practiceId, today) { hasStarted = PracticeStartStore.isStarted(application, practiceId, today) }
+    val todayDayOfWeek = remember { LocalDate.now().dayOfWeek.value }
+    val nowMinutes = remember { LocalTime.now().let { it.hour * 60 + it.minute } }
+    val todaySlot = slots.firstOrNull { it.dayOfWeek == todayDayOfWeek }
+    val alarmHasFired = todaySlot?.timeOfDay != null && nowMinutes >= todaySlot.timeOfDay
+    val onVacation = current.vacationUntilDate
+        ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        ?.let { !it.isBefore(LocalDate.now()) }
+        ?: false
 
     fun logToday(status: String) {
         scope.launch {
@@ -182,29 +189,18 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            // Progress-consolidation round — "recent sessions" used to also list here; that's
+            // progress, so it moved to the Progress tab's PracticeProgressCard along with
+            // everything else. This section is config-only now.
             Text(text = "session style", color = FueruColors.TextSecondary, style = FueruType.title)
             FueruCard(modifier = Modifier.fillMaxWidth()) {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                    FueruSwitch(
-                        checked = current.guidedSessionEnabled,
-                        onCheckedChange = { checked ->
-                            scope.launch { database.practiceDao().update(current.copy(guidedSessionEnabled = checked)) }
-                        },
-                        label = "Guided session (pick a type + duration each time)",
-                    )
-                    if (current.guidedSessionEnabled && recentGuidedSessions.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space1)) {
-                            Text(text = "recent sessions", color = FueruColors.TextMuted, style = FueruType.caption)
-                            recentGuidedSessions.forEach { session ->
-                                Text(
-                                    text = "${formatSessionDate(session.timestamp)} · ${session.sessionType} · ${session.durationMinutes} min",
-                                    color = FueruColors.TextSecondary,
-                                    style = FueruType.caption,
-                                )
-                            }
-                        }
-                    }
-                }
+                FueruSwitch(
+                    checked = current.guidedSessionEnabled,
+                    onCheckedChange = { checked ->
+                        scope.launch { database.practiceDao().update(current.copy(guidedSessionEnabled = checked)) }
+                    },
+                    label = "Guided session (pick a type + duration each time)",
+                )
             }
         }
 
@@ -243,69 +239,53 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
             }
         }
 
-        if (justStarted) {
-            FueruCard(modifier = Modifier.fillMaxWidth()) {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                    if (startedGifUrl != null) {
-                        AsyncImage(
-                            model = startedGifUrl,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxWidth().size(140.dp).clip(RoundedCornerShape(Radius.lg)),
+        // Resistance-flow gating round — this whole card only appears once today's alarm has
+        // actually fired for this practice (matches PracticeScheduler's own isOverdue condition)
+        // and it hasn't already been started/logged/vacationed — not a general-purpose "start
+        // anytime" entry point. justStarted overrides the gate so the celebration state (below)
+        // stays visible for the rest of this screen visit once tapped, same as before this round.
+        val showResistanceEntry = justStarted || (alarmHasFired && !hasStarted && todayStatus == null && !onVacation)
+        if (showResistanceEntry) {
+            if (justStarted) {
+                FueruCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                        if (startedGifUrl != null) {
+                            AsyncImage(
+                                model = startedGifUrl,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxWidth().size(140.dp).clip(RoundedCornerShape(Radius.lg)),
+                            )
+                        }
+                        Text(
+                            text = "nice — didn't need the ramp-up today",
+                            color = FueruColors.TextPrimary,
+                            style = FueruType.body,
                         )
                     }
-                    Text(
-                        text = "nice — didn't need the ramp-up today",
-                        color = FueruColors.TextPrimary,
-                        style = FueruType.body,
-                    )
+                }
+            } else {
+                FueruCard(modifier = Modifier.fillMaxWidth(), glow = true) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+                        Text(
+                            text = "I know, I don't want to either. That's fine — this is what the flow is for.",
+                            color = FueruColors.TextMuted,
+                            style = FueruType.caption,
+                        )
+                        FueruButton(
+                            text = "I'm resisting this",
+                            onClick = { onStartResistanceFlow(current.shortFlowEnabled) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        FueruButton(
+                            text = current.actionVerb?.let { "$it!" } ?: "I've started",
+                            variant = FueruButtonVariant.Secondary,
+                            onClick = { markStartedNow() },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
-        } else {
-            FueruCard(modifier = Modifier.fillMaxWidth(), glow = true) {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                    Text(
-                        text = "I know, I don't want to either. That's fine — this is what the flow is for.",
-                        color = FueruColors.TextMuted,
-                        style = FueruType.caption,
-                    )
-                    FueruButton(
-                        text = "I'm resisting this",
-                        onClick = { onStartResistanceFlow(current.shortFlowEnabled) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    FueruButton(
-                        text = current.actionVerb?.let { "$it!" } ?: "I've started",
-                        variant = FueruButtonVariant.Secondary,
-                        onClick = { markStartedNow() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-
-        FueruCard(modifier = Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                Text(text = score.toInt().toString(), color = FueruColors.Fire4, style = FueruType.statLg)
-                Text(text = "consistency score", color = FueruColors.TextMuted, style = FueruType.caption)
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.space3)) {
-                    FueruStatChip(
-                        icon = painterResource(R.drawable.ic_chart_line_up_fill),
-                        value = "${window7.toInt()}%",
-                        label = "7-day",
-                    )
-                    FueruStatChip(
-                        icon = painterResource(R.drawable.ic_chart_line_up_fill),
-                        value = "${window30.toInt()}%",
-                        label = "30-day",
-                    )
-                }
-            }
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
-            Text(text = "history", color = FueruColors.TextSecondary, style = FueruType.title)
-            FueruPracticeHeatmap(entries = entries, weeksShown = 12)
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
@@ -365,12 +345,6 @@ fun PracticeDetailScreen(practiceId: Long, onBack: () -> Unit, onStartResistance
         )
     }
 }
-
-private val sessionDateFormatter = DateTimeFormatter.ofPattern("MMM d")
-
-/** "Aug 5" — used by the guided-session "recent sessions" list, module round 1 ("fuwari"). */
-private fun formatSessionDate(epochMillis: Long): String =
-    Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(sessionDateFormatter)
 
 private val dayNames = mapOf(1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 7 to "Sun")
 

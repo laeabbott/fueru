@@ -36,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -68,6 +70,7 @@ import com.fueru.app.data.entity.Exercise
 import com.fueru.app.data.entity.ScheduledWorkout
 import com.fueru.app.data.entity.SetLog
 import com.fueru.app.data.entity.UserProfile
+import com.fueru.app.notifications.NotificationHelper
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
@@ -83,6 +86,7 @@ import com.fueru.app.ui.theme.FueruGradients
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Radius
 import com.fueru.app.ui.theme.Spacing
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -296,6 +300,9 @@ private fun formatRepRange(min: Int, max: Int): String = if (min == max) "$max r
 
 // ---- Active session ------------------------------------------------------------------------------
 
+/** Inactivity-check round — how long with zero touch activity before "still there?" fires. */
+private const val INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000L
+
 @Composable
 private fun ActiveWorkoutSession(
     database: AppDatabase,
@@ -348,6 +355,28 @@ private fun ActiveWorkoutSession(
             onKeepGoing = { showExitConfirm = false },
             onEnd = { showExitConfirm = false; onExitRequested() },
         )
+    }
+
+    // Inactivity-check round — "if the user does nothing for 5 minutes, check they're still
+    // engaged." lastInteraction is stamped by a passive touch watcher on the root Column below
+    // (every pointer event, not consumed — the existing picker/button gestures are untouched).
+    // Polls rather than a single delayed alarm so it naturally re-arms on real activity without
+    // cancel/reschedule bookkeeping; only fires once per idle stretch (won't fire again until
+    // either real activity resets the clock, or another full 5 minutes passes since the last fire).
+    var lastInteraction by remember(plan.scheduledWorkout.id) { mutableStateOf(System.currentTimeMillis()) }
+    var lastInactivityNotification by remember(plan.scheduledWorkout.id) { mutableStateOf<Long?>(null) }
+    LaunchedEffect(plan.scheduledWorkout.id, finished) {
+        if (finished) return@LaunchedEffect
+        while (true) {
+            delay(30_000)
+            val now = System.currentTimeMillis()
+            val idleFor = now - lastInteraction
+            val sinceLastNotification = lastInactivityNotification?.let { now - it }
+            if (idleFor >= INACTIVITY_THRESHOLD_MS && (sinceLastNotification == null || sinceLastNotification >= INACTIVITY_THRESHOLD_MS)) {
+                NotificationHelper.notifyWorkoutInactivity(context)
+                lastInactivityNotification = now
+            }
+        }
     }
 
     if (finished) {
@@ -467,6 +496,17 @@ private fun ActiveWorkoutSession(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Inactivity-check round — observes every touch at the Initial pass (before any child
+            // gesture handler sees it) purely to stamp lastInteraction; never consumes, so existing
+            // picker/button/tap handling elsewhere in this screen is completely unaffected.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        lastInteraction = System.currentTimeMillis()
+                    }
+                }
+            }
             .verticalScroll(rememberScrollState())
             .padding(Spacing.space5),
         verticalArrangement = Arrangement.spacedBy(Spacing.space4),
