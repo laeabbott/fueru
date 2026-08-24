@@ -43,6 +43,8 @@ import com.fueru.app.data.WorkoutSessionStore
 import com.fueru.app.data.entity.Practice
 import com.fueru.app.data.seed.ensureSeeded
 import com.fueru.app.escalation.EscalationPermissions
+import com.fueru.app.escalation.EscalationScheduler
+import com.fueru.app.escalation.rememberExactAlarmPermissionGranted
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
 import com.fueru.app.ui.components.FueruCard
@@ -141,6 +143,7 @@ fun SettingsProfileScreen(onBack: () -> Unit) {
 @Composable
 fun SettingsNotificationsScreen(onBack: () -> Unit) {
     val application = LocalContext.current.applicationContext as FueruApplication
+    val scope = rememberCoroutineScope()
     var exportMessage by remember { mutableStateOf<String?>(null) }
 
     SettingsSubScaffold(title = "notifications & diagnostics", onBack = onBack) {
@@ -155,19 +158,23 @@ fun SettingsNotificationsScreen(onBack: () -> Unit) {
                         color = FueruColors.TextMuted,
                         style = FueruType.caption,
                     )
-                    // Not re-checked on resume (e.g. after returning from the system settings screen) —
-                    // reopen this screen to see this flip once granted. Flagged as a known gap, not
-                    // fixed this pass.
-                    var exactAlarmsGranted by remember { mutableStateOf(EscalationPermissions.canScheduleExactAlarms(application)) }
+                    // Prompt-until-granted round — closes the gap this comment used to flag: coming
+                    // straight back from the system "allow exact alarms" screen now flips this
+                    // immediately (rememberExactAlarmPermissionGranted's ON_RESUME recheck), and
+                    // firing the newly-granted callback here means escalations for today get
+                    // scheduled right away rather than waiting for the next full app restart.
+                    val exactAlarmsGranted = rememberExactAlarmPermissionGranted(onNewlyGranted = {
+                        scope.launch {
+                            EscalationScheduler.scheduleTodaysEscalations(application, application.database)
+                            EscalationScheduler.scheduleDailyRescheduleAlarm(application)
+                        }
+                    })
                     if (exactAlarmsGranted) {
                         Text(text = "exact alarms allowed", color = FueruColors.Fire4, style = FueruType.caption)
                     } else {
                         FueruButton(
                             text = "Allow exact alarms",
-                            onClick = {
-                                EscalationPermissions.requestExactAlarmPermission(application)
-                                exactAlarmsGranted = EscalationPermissions.canScheduleExactAlarms(application)
-                            },
+                            onClick = { EscalationPermissions.requestExactAlarmPermission(application) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

@@ -27,13 +27,18 @@ import com.fueru.app.FueruApplication
 import com.fueru.app.R
 import com.fueru.app.data.AppDatabase
 import com.fueru.app.data.DateUtils
+import com.fueru.app.data.NextPracticeSlot
 import com.fueru.app.data.NutritionSnapshot
 import com.fueru.app.data.TodayPracticeSlot
 import com.fueru.app.data.computeTodaysPracticePlan
+import com.fueru.app.data.findNextScheduledPractice
 import com.fueru.app.data.findTodayOrNextWorkout
 import com.fueru.app.data.loadNutritionSnapshot
 import com.fueru.app.data.entity.DailyNutritionLog
 import com.fueru.app.data.entity.UserProfile
+import com.fueru.app.escalation.EscalationPermissions
+import com.fueru.app.escalation.EscalationScheduler
+import com.fueru.app.escalation.rememberExactAlarmPermissionGranted
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruCard
 import com.fueru.app.ui.components.FueruMacroSummaryRow
@@ -47,6 +52,7 @@ import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Spacing
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -87,9 +93,18 @@ fun HomeScreen(
     // Recomputed each time Home enters composition (e.g. returning from logging a practice), same
     // "cheap DB read on entry" pattern the workout card already uses via workoutRefresh.
     var todaysPractices by remember { mutableStateOf<List<TodayPracticeSlot>>(emptyList()) }
+    // Only worth looking up once today's own plan comes back empty — "no practices today" round.
+    var nextPractice by remember { mutableStateOf<NextPracticeSlot?>(null) }
     LaunchedEffect(workoutRefresh) {
         todaysPractices = computeTodaysPracticePlan(database)
+        nextPractice = if (todaysPractices.isEmpty()) findNextScheduledPractice(database) else null
     }
+
+    // Prompt-until-granted round — only nags once escalation would actually have something to do
+    // (a scheduled practice exists); a fresh install with nothing scheduled yet has no reason to
+    // ask for this. Reactive, not workoutRefresh-gated, so placing a practice's first slot on This
+    // Week makes this banner appear the moment you're back on Home, not on some later refresh.
+    val practiceSlots by database.practiceScheduledSlotDao().observeAll().collectAsState(initial = emptyList())
 
     Column(
         modifier = Modifier
@@ -126,6 +141,10 @@ fun HomeScreen(
         val greeting = remember(profile.displayName) { greetingTemplates.random().format(profile.displayName) }
         FueruTypewriterText(text = greeting, color = FueruColors.TextPrimary, style = FueruType.headline)
 
+        if (practiceSlots.isNotEmpty()) {
+            ExactAlarmPermissionBanner(database = database)
+        }
+
         WorkoutCard(
             info = workoutInfo,
             loaded = workoutLoaded,
@@ -135,6 +154,11 @@ fun HomeScreen(
 
         if (todaysPractices.isNotEmpty()) {
             TodaysPracticesCard(slots = todaysPractices, onOpenPractice = onOpenPractice)
+        } else if (practiceSlots.isNotEmpty()) {
+            // Only shown once there's at least one scheduled practice to speak of — a user with
+            // none yet gets the plain "nothing tracked" empty state on the Practices list instead,
+            // not a "no practices today!" card implying there's a rhythm to be missing.
+            NoPracticesTodayCard(next = nextPractice, onOpenPractice = onOpenPractice)
         }
 
         if (profile.foodTrackingEnabled) {
@@ -142,6 +166,45 @@ fun HomeScreen(
         }
 
         FuwariCard(onStartFuwari = onStartFuwari)
+    }
+}
+
+// ---- Exact-alarm permission banner --------------------------------------------------------------
+
+/**
+ * Prompt-until-granted round — shown on every Home visit while at least one practice is scheduled
+ * but escalation can't actually fire (EscalationScheduler silently no-ops without this permission
+ * — see the log-diagnosis round that found it dead this way with zero surfaced explanation). No
+ * dismiss action: it stops appearing the moment the permission is granted, same as any other
+ * empty/blocked-state card on this screen, rather than offering a way to hide a still-broken state.
+ */
+@Composable
+private fun ExactAlarmPermissionBanner(database: AppDatabase) {
+    val application = LocalContext.current.applicationContext as FueruApplication
+    val scope = rememberCoroutineScope()
+    val granted = rememberExactAlarmPermissionGranted(onNewlyGranted = {
+        scope.launch {
+            EscalationScheduler.scheduleTodaysEscalations(application, database)
+            EscalationScheduler.scheduleDailyRescheduleAlarm(application)
+        }
+    })
+    if (granted) return
+
+    FueruCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space3)) {
+            Text(text = "escalation alerts are off", color = FueruColors.SignalDanger, style = FueruType.body)
+            Text(
+                text = "A scheduled practice needs \"exact alarms\" permission to actually nudge, lock, or " +
+                    "warn you — without it, nothing fires.",
+                color = FueruColors.TextMuted,
+                style = FueruType.caption,
+            )
+            FueruButton(
+                text = "Allow exact alarms",
+                onClick = { EscalationPermissions.requestExactAlarmPermission(application) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -294,6 +357,43 @@ private fun TodaysPracticesCard(slots: List<TodayPracticeSlot>, onOpenPractice: 
                 }
             }
         }
+    }
+}
+
+/**
+ * "No practices today" round — the empty-state counterpart to [TodaysPracticesCard] for a day
+ * that's actually clear rather than just unloaded. [next] is only null if nothing's scheduled at
+ * all within the next 7 days (every practice vacationed through its next occurrence, say) — a rare
+ * enough shape that it just quietly omits the second line rather than needing its own copy.
+ */
+@Composable
+private fun NoPracticesTodayCard(next: NextPracticeSlot?, onOpenPractice: (Long) -> Unit) {
+    FueruCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (next != null) it.clickable { onOpenPractice(next.practice.id) } else it },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+            Text(text = "no practices today!", color = FueruColors.TextPrimary, style = FueruType.body)
+            if (next != null) {
+                Text(
+                    text = "next practice: ${next.practice.name} — ${describeDayOffset(next.dayOffset)}" +
+                        (next.slot.timeOfDay?.let { " · ${DateUtils.formatMinutesSinceMidnight(it)}" } ?: ""),
+                    color = FueruColors.TextMuted,
+                    style = FueruType.caption,
+                )
+            }
+        }
+    }
+}
+
+/** 1 -> "tomorrow", 7 -> "next Monday" (today's own weekday, a week out — "Monday" alone would read as today), else the plain weekday name. */
+private fun describeDayOffset(offset: Int): String {
+    val weekday = LocalDate.now().plusDays(offset.toLong()).format(DateTimeFormatter.ofPattern("EEEE"))
+    return when (offset) {
+        1 -> "tomorrow"
+        7 -> "next $weekday"
+        else -> weekday
     }
 }
 

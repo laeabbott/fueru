@@ -18,11 +18,19 @@ interface PracticeScheduledSlotDao {
     @Query("SELECT * FROM practice_scheduled_slot")
     suspend fun getAll(): List<PracticeScheduledSlot>
 
+    /** Reactive twin of [getAll] — This Week's grid renders every practice's slots live alongside workouts. */
+    @Query("SELECT * FROM practice_scheduled_slot")
+    fun observeAll(): Flow<List<PracticeScheduledSlot>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(slots: List<PracticeScheduledSlot>)
 
     @Query("DELETE FROM practice_scheduled_slot WHERE practiceId = :practiceId")
     suspend fun deleteForPractice(practiceId: Long)
+
+    /** This Week's grid un-schedules one slot at a time (tapping a single placed block), unlike Edit Schedule's wholesale [replaceForPractice]. */
+    @Query("DELETE FROM practice_scheduled_slot WHERE id = :slotId")
+    suspend fun deleteById(slotId: Long)
 
     /** Replaces a practice's whole slot set atomically — "Save schedule" always means "this is the full new set," never an incremental patch. */
     @Transaction

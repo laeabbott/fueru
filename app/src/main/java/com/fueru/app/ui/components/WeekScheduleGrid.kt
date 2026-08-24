@@ -26,24 +26,40 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.fueru.app.data.BusyBlock
 import com.fueru.app.data.DateUtils
-import com.fueru.app.data.entity.ScheduledWorkout
 import com.fueru.app.ui.theme.FueruColors
 import com.fueru.app.ui.theme.FueruType
 import com.fueru.app.ui.theme.Radius
 import com.fueru.app.ui.theme.Spacing
-import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.TextStyle
 
-/** One already-scheduled workout for the grid to render, paired with its day label for display. */
-data class GridScheduledBlock(val scheduledWorkout: ScheduledWorkout, val dayLabel: String)
+/**
+ * One already-placed block for the grid to render — a scheduled workout, a practice's recurring
+ * slot, or (in principle) anything else with a weekly day + time. Deliberately source-agnostic
+ * (Practices-on-This-Week round): the grid used to be typed directly to ScheduledWorkout, but
+ * PracticeScheduledSlot's day/time shape doesn't map onto that entity, so the grid now takes
+ * whatever the caller already has and just needs a day-of-week, a time, and how to remove it.
+ * [id] only needs to be unique within one [scheduledThisWeek] list (used for Compose keying), not
+ * globally — callers namespace it themselves (e.g. "workout:12" / "practice:12") if their two
+ * source tables could otherwise collide.
+ */
+data class GridScheduledBlock(
+    val id: String,
+    val dayOfWeek: Int,
+    val minutesSinceMidnight: Int?,
+    val label: String,
+    val color: Color,
+    val textColor: Color,
+    val onUnschedule: () -> Unit,
+)
 
 private const val START_HOUR = 6
 private const val END_HOUR = 23 // exclusive — grid covers 6 AM through 11 PM
@@ -69,6 +85,12 @@ private fun offsetForMinutes(minutesSinceMidnight: Int): Dp {
  * aren't tappable for new placement — this is the mechanism behind "schedule only what fits":
  * once every remaining day already holds a placement, nothing more can be staged, and whatever's
  * left over just stays unscheduled, same as this app's existing pattern for anything not gotten to.
+ *
+ * Practices-on-This-Week round — a day can now hold more than one [GridScheduledBlock] (a workout
+ * and a practice, or several practices, can legitimately share a day at different times), so
+ * placement is no longer blocked just because *something* is already on that day; only past days
+ * stay unplaceable. Each block owns its own removal callback, so this component no longer needs to
+ * know which underlying table a block came from.
  */
 @Composable
 fun FueruWeekScheduleGrid(
@@ -77,7 +99,6 @@ fun FueruWeekScheduleGrid(
     scheduledThisWeek: List<GridScheduledBlock>,
     pendingDayLabel: String?,
     onIgnoreEvent: (BusyBlock) -> Unit,
-    onUnschedule: (ScheduledWorkout) -> Unit,
     onCommit: (dayOfWeek: Int, minutesSinceMidnight: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -90,9 +111,7 @@ fun FueruWeekScheduleGrid(
     val locale = LocalLocale.current.platformLocale
     val today = DateUtils.todayEpochMillis()
     val scheduledByDay = remember(scheduledThisWeek) {
-        scheduledThisWeek.associateBy { block ->
-            Instant.ofEpochMilli(block.scheduledWorkout.scheduledDate).atZone(ZoneId.systemDefault()).dayOfWeek.value
-        }
+        scheduledThisWeek.groupBy { it.dayOfWeek }
     }
     val busyByDay = remember(busyBlocks, weekStart) {
         (1..7).associateWith { dow ->
@@ -148,18 +167,16 @@ fun FueruWeekScheduleGrid(
             HourGutter()
             (1..7).forEach { dow ->
                 val dayStart = DateUtils.dateForDayOfWeek(weekStart, dow)
-                val scheduledBlock = scheduledByDay[dow]
-                val isPlaceable = pendingDayLabel != null && dayStart >= today && scheduledBlock == null
+                val isPlaceable = pendingDayLabel != null && dayStart >= today
                 DayColumn(
                     dayOfWeek = dow,
                     dayStart = dayStart,
                     busyBlocksToday = busyByDay[dow].orEmpty(),
-                    scheduledToday = scheduledBlock,
+                    scheduledToday = scheduledByDay[dow].orEmpty(),
                     staged = staged?.takeIf { it.first == dow }?.second,
                     isPlaceable = isPlaceable,
                     onTapQuarter = { minutes -> staged = dow to minutes },
                     onIgnoreEvent = { ignoreTarget = it },
-                    onUnschedule = onUnschedule,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -202,12 +219,11 @@ private fun DayColumn(
     dayOfWeek: Int,
     dayStart: Long,
     busyBlocksToday: List<BusyBlock>,
-    scheduledToday: GridScheduledBlock?,
+    scheduledToday: List<GridScheduledBlock>,
     staged: Int?,
     isPlaceable: Boolean,
     onTapQuarter: (minutesSinceMidnight: Int) -> Unit,
     onIgnoreEvent: (BusyBlock) -> Unit,
-    onUnschedule: (ScheduledWorkout) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val totalHeight = HOUR_HEIGHT * (END_HOUR - START_HOUR)
@@ -246,17 +262,17 @@ private fun DayColumn(
             )
         }
 
-        scheduledToday?.let { block ->
-            val minutes = block.scheduledWorkout.scheduledTime?.let {
-                ((it - dayStart) / 60_000L).toInt()
-            } ?: (START_HOUR * 60)
+        // A block with no time set (a practice slot saved without one via Edit Schedule) has
+        // nowhere on an hour grid to go — it stays real and editable there, just not drawn here.
+        scheduledToday.forEach { block ->
+            val minutes = block.minutesSinceMidnight ?: return@forEach
             TimeBlock(
                 startMinutes = minutes,
                 endMinutes = minutes + 60,
-                label = block.dayLabel,
-                color = FueruColors.Fire4.copy(alpha = 0.3f),
-                textColor = FueruColors.Fire4,
-                onClick = { onUnschedule(block.scheduledWorkout) },
+                label = block.label,
+                color = block.color,
+                textColor = block.textColor,
+                onClick = block.onUnschedule,
             )
         }
 
@@ -278,8 +294,8 @@ private fun TimeBlock(
     startMinutes: Int,
     endMinutes: Int,
     label: String,
-    color: androidx.compose.ui.graphics.Color,
-    textColor: androidx.compose.ui.graphics.Color,
+    color: Color,
+    textColor: Color,
     onClick: (() -> Unit)?,
 ) {
     if (endMinutes <= START_HOUR * 60 || startMinutes >= END_HOUR * 60) return

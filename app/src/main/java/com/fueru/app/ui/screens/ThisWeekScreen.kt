@@ -30,6 +30,9 @@ import com.fueru.app.data.IcsCalendarStore
 import com.fueru.app.data.IgnoredEventStore
 import com.fueru.app.data.allBusyBlocksForWeek
 import com.fueru.app.data.autoFillRecurringWeek
+import com.fueru.app.data.entity.Practice
+import com.fueru.app.data.entity.PracticeScheduledSlot
+import com.fueru.app.data.entity.ProgramDay
 import com.fueru.app.data.entity.ScheduledWorkout
 import com.fueru.app.ui.components.FueruButton
 import com.fueru.app.ui.components.FueruButtonVariant
@@ -77,9 +80,26 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
     val programDays by database.programDayDao()
         .observeByPhase(profile.currentPhase)
         .collectAsState(initial = emptyList())
+    // Practices-on-This-Week round — practices are the second thing this screen schedules,
+    // alongside workout program days. Both feed the same grid; see PendingScheduleItem below for
+    // how the two get merged into one queue.
+    val practices by database.practiceDao().observeAll().collectAsState(initial = emptyList())
+    val practiceSlots by database.practiceScheduledSlotDao().observeAll().collectAsState(initial = emptyList())
 
     val programDayById = remember(programDays) { programDays.associateBy { it.id } }
+    val practiceById = remember(practices) { practices.associateBy { it.id } }
     val unscheduledDays = programDays.filter { day -> scheduledThisWeek.none { it.programDayId == day.id } }
+    // A practice needs only one placement to be escalation-armed — EscalationScheduler reads the
+    // same practice_scheduled_slot table this writes to, so there's no separate "turn on
+    // enforcement" step. It drops out of the queue as soon as it has any slot at all, unlike a
+    // program day's exactly-one-per-week requirement (further days for an already-slotted practice
+    // still go through Edit Schedule on its own detail screen).
+    val slottedPracticeIds = remember(practiceSlots) { practiceSlots.map { it.practiceId }.toSet() }
+    val unscheduledPractices = practices.filter { it.id !in slottedPracticeIds }
+    val pendingQueue = remember(unscheduledDays, unscheduledPractices) {
+        unscheduledDays.map { PendingScheduleItem.Workout(it) } + unscheduledPractices.map { PendingScheduleItem.PracticeItem(it) }
+    }
+    val pendingItem = pendingQueue.firstOrNull()
 
     // Calendar-redesign round — one combined 7-day fetch for the grid, re-run whenever the ICS
     // import state or the ignored-events set could have changed (icsImported flip, or
@@ -91,25 +111,41 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
     }
 
     fun scheduleDay(dayOfWeek: Int, minutesSinceMidnight: Int) {
-        val day = unscheduledDays.firstOrNull() ?: return
-        val date = DateUtils.dateForDayOfWeek(weekStart, dayOfWeek)
-        scope.launch {
-            database.scheduledWorkoutDao().insert(
-                ScheduledWorkout(
-                    weekStartDate = weekStart,
-                    programDayId = day.id,
-                    scheduledDate = date,
-                    scheduledTime = DateUtils.combineDateAndMinutes(date, minutesSinceMidnight),
-                    status = "planned",
-                    completedDate = null,
-                ),
-            )
-            autoFillTrigger++
+        when (val item = pendingItem ?: return) {
+            is PendingScheduleItem.Workout -> {
+                val date = DateUtils.dateForDayOfWeek(weekStart, dayOfWeek)
+                scope.launch {
+                    database.scheduledWorkoutDao().insert(
+                        ScheduledWorkout(
+                            weekStartDate = weekStart,
+                            programDayId = item.day.id,
+                            scheduledDate = date,
+                            scheduledTime = DateUtils.combineDateAndMinutes(date, minutesSinceMidnight),
+                            status = "planned",
+                            completedDate = null,
+                        ),
+                    )
+                    autoFillTrigger++
+                }
+            }
+            is PendingScheduleItem.PracticeItem -> {
+                scope.launch {
+                    // insertAll rather than replaceForPractice (which Edit Schedule uses) — this
+                    // only ever adds the one new slot being placed here, leaving any others alone.
+                    database.practiceScheduledSlotDao().insertAll(
+                        listOf(PracticeScheduledSlot(practiceId = item.practice.id, dayOfWeek = dayOfWeek, timeOfDay = minutesSinceMidnight)),
+                    )
+                }
+            }
         }
     }
 
     fun unschedule(workout: ScheduledWorkout) {
         scope.launch { database.scheduledWorkoutDao().delete(workout) }
+    }
+
+    fun unschedulePracticeSlot(slot: PracticeScheduledSlot) {
+        scope.launch { database.practiceScheduledSlotDao().deleteById(slot.id) }
     }
 
     val scheduledDates = remember(scheduledThisWeek) { scheduledThisWeek.map { it.scheduledDate }.toSet() }
@@ -119,7 +155,38 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
             date >= DateUtils.todayEpochMillis() && date !in scheduledDates
         }
     }
+    // Workouts only — a program day needs a whole day to itself the way this count assumes, but a
+    // practice can share a day with other things, so it has no equivalent "ran out of room" state.
     val overflowCount = (unscheduledDays.size - remainingPlaceableDayCount).coerceAtLeast(0)
+
+    // One combined list of every already-placed block the grid draws — workouts derive their
+    // day-of-week/minutes from their absolute scheduledDate/scheduledTime, practice slots already
+    // carry theirs natively (dayOfWeek/timeOfDay is exactly this shape, recurring).
+    val gridBlocks = remember(scheduledThisWeek, practiceSlots, programDayById, practiceById) {
+        val workoutBlocks = scheduledThisWeek.map { sw ->
+            GridScheduledBlock(
+                id = "workout:${sw.id}",
+                dayOfWeek = Instant.ofEpochMilli(sw.scheduledDate).atZone(ZoneId.systemDefault()).dayOfWeek.value,
+                minutesSinceMidnight = sw.scheduledTime?.let { ((it - sw.scheduledDate) / 60_000L).toInt() },
+                label = programDayById[sw.programDayId]?.dayLabel ?: "Workout",
+                color = FueruColors.Fire4.copy(alpha = 0.3f),
+                textColor = FueruColors.Fire4,
+                onUnschedule = { unschedule(sw) },
+            )
+        }
+        val practiceBlocks = practiceSlots.map { slot ->
+            GridScheduledBlock(
+                id = "practice:${slot.id}",
+                dayOfWeek = slot.dayOfWeek,
+                minutesSinceMidnight = slot.timeOfDay,
+                label = practiceById[slot.practiceId]?.name ?: "Practice",
+                color = FueruColors.SignalInfo.copy(alpha = 0.3f),
+                textColor = FueruColors.SignalInfo,
+                onUnschedule = { unschedulePracticeSlot(slot) },
+            )
+        }
+        workoutBlocks + practiceBlocks
+    }
 
     Column(
         modifier = Modifier
@@ -172,28 +239,33 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
             }
         }
 
-        when {
-            programDays.isEmpty() -> {
-                // The seeded program (Section 8) has no rows for this phase — either the DB hasn't
-                // finished seeding yet, or the seed callback never ran. Not a normal empty state.
-                FueruCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
-                        Text(
-                            text = "no program days found",
-                            color = FueruColors.TextPrimary,
-                            style = FueruType.bodyLg,
-                        )
-                        Text(
-                            text = "Phase \"${profile.currentPhase}\" has zero seeded workout days — that shouldn't " +
-                                "happen. Check the Database Inspector's program_day table, or reinstall so the " +
-                                "seed data reloads.",
-                            color = FueruColors.TextMuted,
-                            style = FueruType.caption,
-                        )
-                    }
+        if (programDays.isEmpty()) {
+            // The seeded program (Section 8) has no rows for this phase — either the DB hasn't
+            // finished seeding yet, or the seed callback never ran. Not a normal empty state, and
+            // unrelated to practices, so this still short-circuits the whole screen rather than
+            // just the workout half of it.
+            FueruCard(modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.space2)) {
+                    Text(
+                        text = "no program days found",
+                        color = FueruColors.TextPrimary,
+                        style = FueruType.bodyLg,
+                    )
+                    Text(
+                        text = "Phase \"${profile.currentPhase}\" has zero seeded workout days — that shouldn't " +
+                            "happen. Check the Database Inspector's program_day table, or reinstall so the " +
+                            "seed data reloads.",
+                        color = FueruColors.TextMuted,
+                        style = FueruType.caption,
+                    )
                 }
             }
-            unscheduledDays.isEmpty() -> {
+        } else {
+            // Practices-on-This-Week round — the grid now always renders (previously it hid
+            // entirely once nothing was left to place), because it's also the one place already-
+            // placed practice slots are visible for removal, and that shouldn't disappear just
+            // because the workout side of the queue is empty.
+            if (pendingQueue.isEmpty()) {
                 FueruCard(modifier = Modifier.fillMaxWidth(), glow = true) {
                     Text(
                         text = "you're fully booked this week — nice.",
@@ -202,29 +274,24 @@ fun ThisWeekScreen(onBack: () -> Unit, onViewExercises: (Long) -> Unit) {
                     )
                 }
             }
-            else -> {
-                FueruWeekScheduleGrid(
-                    weekStart = weekStart,
-                    busyBlocks = busyBlocks,
-                    scheduledThisWeek = scheduledThisWeek.map { sw ->
-                        GridScheduledBlock(sw, programDayById[sw.programDayId]?.dayLabel ?: "Workout")
-                    },
-                    pendingDayLabel = unscheduledDays.firstOrNull()?.dayLabel,
-                    onIgnoreEvent = { block ->
-                        scope.launch { IgnoredEventStore.ignore(application, block.id) }
-                        busyRefreshTrigger++
-                    },
-                    onUnschedule = ::unschedule,
-                    onCommit = ::scheduleDay,
-                    modifier = Modifier.fillMaxWidth(),
+            FueruWeekScheduleGrid(
+                weekStart = weekStart,
+                busyBlocks = busyBlocks,
+                scheduledThisWeek = gridBlocks,
+                pendingDayLabel = pendingItem?.label,
+                onIgnoreEvent = { block ->
+                    scope.launch { IgnoredEventStore.ignore(application, block.id) }
+                    busyRefreshTrigger++
+                },
+                onCommit = ::scheduleDay,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (overflowCount > 0) {
+                Text(
+                    text = "no more room this week for $overflowCount more day${if (overflowCount == 1) "" else "s"} — pick ${if (overflowCount == 1) "it" else "them"} up next week.",
+                    color = FueruColors.TextMuted,
+                    style = FueruType.caption,
                 )
-                if (overflowCount > 0) {
-                    Text(
-                        text = "no more room this week for $overflowCount more day${if (overflowCount == 1) "" else "s"} — pick ${if (overflowCount == 1) "it" else "them"} up next week.",
-                        color = FueruColors.TextMuted,
-                        style = FueruType.caption,
-                    )
-                }
             }
         }
 
@@ -273,3 +340,21 @@ private fun formatShortDate(epochMillis: Long): String =
     Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .format(DateTimeFormatter.ofPattern("EEE, MMM d"))
+
+/**
+ * The one thing being placed on the grid at a time — either a workout program day or a practice
+ * still needing its first slot. Program days are exhausted from [unscheduledDays] one at a time
+ * same as before; practices are appended after, so existing workout-scheduling behavior is
+ * unchanged until that queue empties.
+ */
+private sealed interface PendingScheduleItem {
+    val label: String
+
+    data class Workout(val day: ProgramDay) : PendingScheduleItem {
+        override val label get() = day.dayLabel
+    }
+
+    data class PracticeItem(val practice: Practice) : PendingScheduleItem {
+        override val label get() = practice.name
+    }
+}

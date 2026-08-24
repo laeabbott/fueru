@@ -94,21 +94,27 @@ fun FueruNavGraph(
     val showBottomNav = currentRoute in tabRoutes && !(currentRoute == FueruRoutes.WORKOUT && workoutSessionActive)
 
     // An escalation notification tap (Stage 0/1, see NotificationHelper.resistanceFlowPendingIntent)
-    // lands here. Known gap, not fixed this round: if this fires before Splash has finished routing
-    // (a cold start straight from a notification), this navigate() can race with Splash's own
-    // popUpTo — low-probability for a personal app that's normally already been opened once, not
-    // engineered around this pass.
-    LaunchedEffect(pendingResistanceFlowPracticeId) {
-        if (pendingResistanceFlowPracticeId != null) {
+    // lands here. Notification-tap-race round — fixes what was a 100%-reproducible bug, not a rare
+    // one: MainActivity.onCreate sets pendingResistanceFlowPracticeId *before* setContent, so on a
+    // cold start this effect used to fire on the very first composition, while Splash was still
+    // showing — pushing resistanceFlow on top of the SPLASH back-stack entry. ~1.5s later Splash's
+    // own navigate(HOME) { popUpTo(SPLASH) { inclusive = true } } would pop everything from the
+    // current top down through SPLASH, taking the just-pushed resistanceFlow destination with it —
+    // so every cold-start notification tap silently landed on Home instead, indistinguishable from
+    // "the notification tap did nothing." Gating on currentRoute defers this until Splash has
+    // actually finished routing (to Home or Onboarding), so the deep link lands on top of *that*
+    // instead of getting swept away by it.
+    LaunchedEffect(pendingResistanceFlowPracticeId, currentRoute) {
+        if (pendingResistanceFlowPracticeId != null && currentRoute != null && currentRoute != FueruRoutes.SPLASH) {
             navController.navigate(FueruRoutes.resistanceFlow(pendingResistanceFlowPracticeId, false))
             onPendingResistanceFlowConsumed()
         }
     }
 
-    // A Stage 4 (or offline-resolved) notification tap lands here — same mechanism, same known
-    // cold-start race caveat as the resistance-flow deep link above.
-    LaunchedEffect(pendingConsequenceEventId) {
-        if (pendingConsequenceEventId != null) {
+    // A Stage 4 (or offline-resolved) notification tap lands here — same mechanism, same fix as the
+    // resistance-flow deep link above.
+    LaunchedEffect(pendingConsequenceEventId, currentRoute) {
+        if (pendingConsequenceEventId != null && currentRoute != null && currentRoute != FueruRoutes.SPLASH) {
             navController.navigate(FueruRoutes.consequencePledge(pendingConsequenceEventId))
             onPendingConsequenceConsumed()
         }

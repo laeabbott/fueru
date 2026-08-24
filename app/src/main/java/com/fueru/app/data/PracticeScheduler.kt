@@ -68,3 +68,33 @@ suspend fun computeTodaysPracticePlan(database: AppDatabase): List<TodayPractice
         TodayPracticeSlot(practice = practice, slot = slot, loggedStatus = entry?.status, isOverdue = isOverdue)
     }
 }
+
+/** Home's "no practices today" fallback — the next scheduled slot, however many days out. [dayOffset] is 1 for tomorrow, up to 7 for the same weekday next week. */
+data class NextPracticeSlot(val practice: Practice, val slot: PracticeScheduledSlot, val dayOffset: Int)
+
+/**
+ * Only called once [computeTodaysPracticePlan] has already come back empty, so today's own
+ * dayOfWeek is never a candidate here — starts the search at tomorrow and walks a full week
+ * forward, same vacation exclusion as [computeTodaysPracticePlan] (checked against the slot's own
+ * future date, not today's), so a practice that's vacationed through its next occurrence gets
+ * skipped in favor of whichever comes after it.
+ */
+suspend fun findNextScheduledPractice(database: AppDatabase): NextPracticeSlot? {
+    val today = LocalDate.now()
+    val todayDayOfWeek = today.dayOfWeek.value
+    val allSlots = database.practiceScheduledSlotDao().getAll()
+    for (offset in 1..7) {
+        val dayOfWeek = (todayDayOfWeek - 1 + offset) % 7 + 1
+        val futureDate = today.plusDays(offset.toLong())
+        val candidates = allSlots.filter { it.dayOfWeek == dayOfWeek }.sortedBy { it.timeOfDay ?: Int.MAX_VALUE }
+        for (slot in candidates) {
+            val practice = database.practiceDao().getById(slot.practiceId) ?: continue
+            val onVacation = practice.vacationUntilDate
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?.let { !it.isBefore(futureDate) }
+                ?: false
+            if (!onVacation) return NextPracticeSlot(practice, slot, offset)
+        }
+    }
+    return null
+}
