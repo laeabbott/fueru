@@ -6,8 +6,9 @@ type: task
 priority: normal
 tags:
     - escalation
+    - human:not-needed
 created_at: 2026-09-27T09:54:26Z
-updated_at: 2026-09-27T09:54:26Z
+updated_at: 2026-10-05T09:35:23Z
 ---
 
 NotificationHelper.notifyEscalationWarning's deadline text hardcodes "fires in 10 minutes"

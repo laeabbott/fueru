@@ -6,8 +6,9 @@ type: feature
 priority: high
 tags:
     - pivot
+    - human:needed
 created_at: 2026-09-27T09:54:16Z
-updated_at: 2026-09-27T09:54:16Z
+updated_at: 2026-10-05T09:35:23Z
 ---
 
 Rounds 1-4 of the practices pivot each closed with an explicit "fully verified end-to-end
